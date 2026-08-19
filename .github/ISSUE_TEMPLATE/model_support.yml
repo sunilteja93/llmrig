@@ -1,0 +1,31 @@
+name: Model or runtime support
+description: Request or contribute support for a model family, model tag, or local runtime
+title: "[Model support]: "
+labels: ["enhancement"]
+body:
+  - type: input
+    id: model
+    attributes:
+      label: Model family / exact model
+      placeholder: "Qwen..., Gemma..., Llama..., etc."
+    validations:
+      required: true
+  - type: input
+    id: runtime
+    attributes:
+      label: Local runtime/backend
+      placeholder: "Ollama / MLX / llama.cpp / other"
+    validations:
+      required: true
+  - type: textarea
+    id: sources
+    attributes:
+      label: Primary sources
+      description: Link upstream model/runtime documentation for identifiers, size, context, and platform support.
+    validations:
+      required: true
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Hardware tested
+      description: If you tested it, include OS, CPU/GPU, RAM/VRAM, context, and result.

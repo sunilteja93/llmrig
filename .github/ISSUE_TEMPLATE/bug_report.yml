@@ -1,0 +1,45 @@
+name: Bug report
+description: Report a reproducible problem in LLMRig
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for helping improve LLMRig. Please remove secrets and private paths from logs before posting.
+  - type: input
+    id: version
+    attributes:
+      label: LLMRig version
+      placeholder: "0.3.0"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "macOS 26 / Windows 11 / Ubuntu 24.04"
+    validations:
+      required: true
+  - type: input
+    id: hardware
+    attributes:
+      label: Hardware
+      placeholder: "Apple M4 Max 48 GB / RTX 4090 24 GB / etc."
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and sanitized logs
+    validations:
+      required: true
