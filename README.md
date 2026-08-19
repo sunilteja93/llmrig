@@ -1,5 +1,7 @@
 # LLMRig
 
+[![CI](https://github.com/sunilteja93/llmrig/actions/workflows/ci.yml/badge.svg)](https://github.com/sunilteja93/llmrig/actions/workflows/ci.yml)
+
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg) ![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue.svg)
 
 **Know what your rig can run.**
