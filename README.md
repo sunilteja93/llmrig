@@ -306,3 +306,4 @@ LLMRig is released under the [MIT License](LICENSE).
 - Ollama generate API: `https://docs.ollama.com/api/generate`
 - Ollama running-model API: `https://docs.ollama.com/api/ps`
 - Qwen3.8 Ollama tags: `https://ollama.com/library/qwen3.8/tags`
+
