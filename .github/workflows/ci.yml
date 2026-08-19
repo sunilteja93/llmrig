@@ -2,24 +2,64 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
   pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
 
 jobs:
   test:
+    name: Test (${{ matrix.os }}, Python ${{ matrix.python-version }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.9", "3.13"]
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+        python-version:
+          - "3.9"
+          - "3.13"
+
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+
       - name: Compile
         run: python -m py_compile llmrig.py
+
       - name: Unit tests
         run: python -m unittest discover -s tests -v
+
       - name: LLMRig sanity check
         run: python llmrig.py check
+
+  ci-success:
+    name: CI Success
+    if: ${{ always() }}
+    needs:
+      - test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Verify matrix
+        shell: bash
+        run: |
+          echo "Test matrix result: ${{ needs.test.result }}"
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "One or more required LLMRig CI jobs failed."
+            exit 1
+          fi
+          echo "All required LLMRig CI jobs passed."
