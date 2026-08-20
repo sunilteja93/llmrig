@@ -1,18 +1,22 @@
 # LLMRig
 
 [![CI](https://github.com/sunilteja93/llmrig/actions/workflows/ci.yml/badge.svg)](https://github.com/sunilteja93/llmrig/actions/workflows/ci.yml)
-
-![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg) ![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue.svg)
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue.svg)
 
 **Know what your rig can run.**
 
-LLMRig is an open-source, cross-platform CLI that inspects your hardware, recommends a practical local LLM configuration, helps set it up through Ollama, and benchmarks the result on your actual machine.
+LLMRig answers a practical question: **which local LLM can this machine actually run well?**
 
-> I created LLMRig to help people who want to set up a local LLM but are not sure whether their hardware is enough, which model or quantization to choose, or how well it will actually run. The goal is to make the path from hardware check to a working, benchmarked local model simple and transparent.
+It inspects your hardware, recommends a practical model configuration, can set it up through Ollama, and benchmarks the result on the machine itself.
 
-**LLMRig is community-driven. Contributions are welcome.** The current release is Qwen-first, and the project is intentionally structured to grow toward more model families, inference backends, hardware platforms, and reproducible community benchmarks.
+```bash
+python3 llmrig.py
+```
 
-LLMRig is an independent community project. It is not affiliated with or endorsed by Qwen, Alibaba, Ollama, Hugging Face, or the authors of community model derivatives.
+No Python package installation is required. The CLI uses only the Python standard library.
+
+LLMRig is currently Qwen-first and is designed to expand to additional model families, inference runtimes, GPUs, and platforms.
 
 ## What LLMRig does
 
