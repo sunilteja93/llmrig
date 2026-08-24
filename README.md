@@ -292,14 +292,14 @@ Run the full local validation set before opening a pull request:
 ```bash
 python3 -m py_compile llmrig.py
 python3 -m unittest discover -s tests -v
-llmrig check
-llmrig models --offline --fit
+python3 llmrig.py check
+python3 llmrig.py models --offline --fit
 ```
 
 With internet access:
 
 ```bash
-llmrig check --online
+python3 llmrig.py check --online
 ```
 
 GitHub Actions also runs compile, unit-test, and sanity-check jobs on Linux, macOS, and Windows.
