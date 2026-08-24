@@ -1,22 +1,42 @@
-# LLMRig
+<h1 align="center">LLMRig</h1>
 
-[![CI](https://github.com/sunilteja93/llmrig/actions/workflows/ci.yml/badge.svg)](https://github.com/sunilteja93/llmrig/actions/workflows/ci.yml)
-![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
-![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue.svg)
+<p align="center">
+  <strong>Know what your rig can run.</strong>
+</p>
 
-**Know what your rig can run.**
+<p align="center">
+  Hardware-aware local LLM selection, setup, and benchmarking.
+</p>
 
-LLMRig answers a practical question: **which local LLM can this machine actually run well?**
+<p align="center">
+  <a href="https://github.com/sunilteja93/llmrig/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/sunilteja93/llmrig/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg">
+  <img alt="Python 3.9+" src="https://img.shields.io/badge/Python-3.9%2B-blue.svg">
+</p>
 
-It inspects your hardware, recommends a practical model configuration, can set it up through Ollama, and benchmarks the result on the machine itself.
+<p align="center">
+  <img src="./assets/llmrig-terminal.svg" alt="LLMRig local model fit flow" width="100%" />
+</p>
+
+LLMRig answers one practical question:
+
+> **Which local LLM can this machine actually run well?**
+
+It detects the hardware you actually have, estimates a conservative model budget, recommends a practical model and context configuration, can set it up through Ollama, and benchmarks the result on the machine itself.
 
 ```bash
+git clone https://github.com/sunilteja93/llmrig.git
+cd llmrig
 python3 llmrig.py
 ```
 
-No Python package installation is required. The CLI uses only the Python standard library.
+**No package installation is required for the CLI.** LLMRig uses only the Python standard library.
 
-LLMRig is currently Qwen-first and is designed to expand to additional model families, inference runtimes, GPUs, and platforms.
+```text
+detect hardware → estimate fit → recommend → setup → benchmark → compare
+```
+
+LLMRig is currently **Qwen-first**. The architecture is intended to expand to additional model families, runtimes, GPUs, and platforms without changing the core workflow.
 
 ## What LLMRig does
 
