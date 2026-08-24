@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llmrig"
+dynamic = ["version"]
+description = "Know what your rig can run. Hardware-aware local LLM discovery, recommendation, setup, and benchmarking."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/sunilteja93/llmrig"
+Repository = "https://github.com/sunilteja93/llmrig"
+Issues = "https://github.com/sunilteja93/llmrig/issues"
+
+[project.scripts]
+llmrig = "llmrig:main"
+
+[tool.setuptools]
+py-modules = ["llmrig"]
+
+[tool.setuptools.dynamic]
+version = {attr = "llmrig.VERSION"}
