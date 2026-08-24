@@ -24,13 +24,31 @@ LLMRig answers one practical question:
 
 It detects the hardware you actually have, estimates a conservative model budget, recommends a practical model and context configuration, can set it up through Ollama, and benchmarks the result on the machine itself.
 
+### Install as a CLI
+
+From a cloned checkout:
+
 ```bash
 git clone https://github.com/sunilteja93/llmrig.git
 cd llmrig
+python3 -m pip install .
+```
+
+Then use LLMRig from anywhere:
+
+```bash
+llmrig doctor
+llmrig recommend
+llmrig models --fit
+```
+
+Or run directly from source without installing:
+
+```bash
 python3 llmrig.py
 ```
 
-**No package installation is required for the CLI.** LLMRig uses only the Python standard library.
+**LLMRig has no third-party Python runtime dependencies.** The CLI uses only the Python standard library.
 
 ```text
 detect hardware → estimate fit → recommend → setup → benchmark → compare
