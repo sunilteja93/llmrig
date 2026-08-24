@@ -2,6 +2,14 @@
 
 All notable changes to LLMRig will be documented here.
 
+## 0.4.1 - 2026-08-24
+
+### Fixed
+
+- Use an absolute URL for the terminal graphic so it renders correctly on PyPI.
+- Refresh README installation and runtime-dependency wording.
+- Update the repository layout to reflect packaging, assets, and publishing workflows.
+
 ## 0.4.0 - 2026-08-23
 
 ### Added

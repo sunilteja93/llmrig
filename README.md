@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <img src="./assets/llmrig-terminal.svg" alt="LLMRig local model fit flow" width="100%" />
+  <img src="https://raw.githubusercontent.com/sunilteja93/llmrig/main/assets/llmrig-terminal.svg" alt="LLMRig local model fit flow" width="100%" />
 </p>
 
 LLMRig answers one practical question:
@@ -89,8 +89,7 @@ If you want to add support for another model family, runtime, GPU vendor, or ope
 - macOS, Windows, or Linux
 - Ollama for automatic model setup and benchmarking
 - Internet access for live discovery and model downloads
-
-There is no Python dependency installation step for the CLI itself.
+- No third-party Python runtime dependencies
 
 ## Quick start
 
@@ -311,15 +310,21 @@ llmrig/
 ├── .github/
 │   ├── ISSUE_TEMPLATE/
 │   ├── workflows/
-│   │   └── ci.yml
+│   │   ├── ci.yml
+│   │   ├── publish-to-pypi.yml
+│   │   └── refresh-profile-on-release.yml
 │   └── PULL_REQUEST_TEMPLATE.md
+├── assets/
+│   └── llmrig-terminal.svg
 ├── tests/
 │   ├── __init__.py
 │   └── test_llmrig.py
 ├── .gitignore
+├── CHANGELOG.md
 ├── CODE_OF_CONDUCT.md
 ├── CONTRIBUTING.md
 ├── LICENSE
+├── pyproject.toml
 ├── README.md
 ├── SECURITY.md
 └── llmrig.py
