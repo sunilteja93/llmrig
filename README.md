@@ -12,6 +12,7 @@
   <a href="https://github.com/sunilteja93/llmrig/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/sunilteja93/llmrig/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg">
   <img alt="Python 3.9+" src="https://img.shields.io/badge/Python-3.9%2B-blue.svg">
+  <a href="https://pypi.org/project/llmrig/"><img alt="PyPI version" src="https://img.shields.io/pypi/v/llmrig"></a>
 </p>
 
 <p align="center">
@@ -24,14 +25,12 @@ LLMRig answers one practical question:
 
 It detects the hardware you actually have, estimates a conservative model budget, recommends a practical model and context configuration, can set it up through Ollama, and benchmarks the result on the machine itself.
 
-### Install as a CLI
+### Install
 
-From a cloned checkout:
+Install LLMRig from PyPI:
 
 ```bash
-git clone https://github.com/sunilteja93/llmrig.git
-cd llmrig
-python3 -m pip install .
+python3 -m pip install llmrig
 ```
 
 Then use LLMRig from anywhere:
@@ -95,14 +94,11 @@ There is no Python dependency installation step for the CLI itself.
 
 ## Quick start
 
-After cloning or downloading the repository, run the interactive wizard:
+Run the interactive wizard:
 
 ```bash
-cd llmrig
-python3 llmrig.py
+llmrig
 ```
-
-On Windows, use `python` instead of `python3` if needed.
 
 The wizard inspects the machine, recommends a supported model, pulls it if necessary, benchmarks it, and prints the local chat/API details.
 
@@ -111,13 +107,13 @@ The wizard inspects the machine, recommends a supported model, pulls it if neces
 ### Inspect the machine
 
 ```bash
-python3 llmrig.py doctor
+llmrig doctor
 ```
 
 Machine-readable output:
 
 ```bash
-python3 llmrig.py doctor --json
+llmrig doctor --json
 ```
 
 ### List models
@@ -125,49 +121,49 @@ python3 llmrig.py doctor --json
 Show curated local-ready models plus the newest live Qwen LLM/multimodal candidates:
 
 ```bash
-python3 llmrig.py models --fit
+llmrig models --fit
 ```
 
 Force live refresh:
 
 ```bash
-python3 llmrig.py models --refresh --fit
+llmrig models --refresh --fit
 ```
 
 Show the full Qwen Hugging Face organization catalog, including non-LLM artifacts:
 
 ```bash
-python3 llmrig.py models --all --fit
+llmrig models --all --fit
 ```
 
 Use only the built-in curated snapshot:
 
 ```bash
-python3 llmrig.py models --offline --fit
+llmrig models --offline --fit
 ```
 
 ### Get a recommendation
 
 ```bash
-python3 llmrig.py recommend
+llmrig recommend
 ```
 
 Official models only:
 
 ```bash
-python3 llmrig.py recommend --category official
+llmrig recommend --category official
 ```
 
 Community reduced-refusal models only:
 
 ```bash
-python3 llmrig.py recommend --category unrestricted
+llmrig recommend --category unrestricted
 ```
 
 Prioritize quality:
 
 ```bash
-python3 llmrig.py recommend \
+llmrig recommend \
   --category official \
   --preference quality
 ```
@@ -177,13 +173,13 @@ For CLI convenience, `unrestricted`, `uncensored`, and `reduced-refusal` map to 
 ### Set up a model
 
 ```bash
-python3 llmrig.py setup --category official
+llmrig setup --category official
 ```
 
 Or choose an exact curated model:
 
 ```bash
-python3 llmrig.py setup \
+llmrig setup \
   --model qwen3.8:27b-mlx \
   --context 32768
 ```
@@ -195,7 +191,7 @@ If a known alias of the selected curated build is already installed, LLMRig reus
 One model:
 
 ```bash
-python3 llmrig.py bench \
+llmrig bench \
   --model qwen3.8:27b-mlx \
   --context 32768 \
   --runs 2
@@ -204,7 +200,7 @@ python3 llmrig.py bench \
 All installed supported Qwen models:
 
 ```bash
-python3 llmrig.py bench \
+llmrig bench \
   --all-installed \
   --context 32768 \
   --runs 2
@@ -217,13 +213,13 @@ LLMRig deduplicates installed aliases that resolve to the same Ollama model ID.
 Offline:
 
 ```bash
-python3 llmrig.py check
+llmrig check
 ```
 
 Include live Hugging Face discovery:
 
 ```bash
-python3 llmrig.py check --online
+llmrig check --online
 ```
 
 ## Model discovery and safety
