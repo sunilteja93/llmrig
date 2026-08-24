@@ -1,0 +1,23 @@
+name: Refresh profile on release
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  refresh-profile:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Trigger profile refresh
+        env:
+          GH_TOKEN: ${{ secrets.PROFILE_DISPATCH_TOKEN }}
+        run: |
+          gh api \
+            --method POST \
+            repos/sunilteja93/sunilteja93/dispatches \
+            -f event_type='research-pulse'
