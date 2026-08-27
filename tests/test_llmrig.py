@@ -44,9 +44,10 @@ class LLMRigTests(unittest.TestCase):
             supported_artifact_formats=(artifact_format,),
             supported_platforms=llmrig.ALL_PLATFORMS,
             supported_architectures=(),
-            installation_supported=False,
-            execution_supported=True,
-            benchmark_supported=False,
+            runtime_execution_capable=True,
+            llmrig_installation_supported=False,
+            llmrig_execution_supported=False,
+            llmrig_benchmark_supported=False,
             confidence=llmrig.Confidence.HIGH,
             evidence=(
                 llmrig.RecommendationEvidence(
@@ -659,7 +660,9 @@ class LLMRigTests(unittest.TestCase):
             capability = provider.capability(self.mac_profile())
         self.assertTrue(capability.installed)
         self.assertFalse(capability.available)
-        self.assertTrue(capability.execution_supported)
+        self.assertTrue(capability.runtime_execution_capable)
+        self.assertTrue(capability.llmrig_execution_supported)
+        self.assertTrue(capability.llmrig_benchmark_supported)
         self.assertEqual(capability.supported_artifact_formats, ("Ollama",))
 
     def test_ollama_capability_reports_uninstalled(self):
@@ -682,6 +685,9 @@ class LLMRigTests(unittest.TestCase):
         self.assertTrue(capability.installed)
         self.assertTrue(capability.available)
         self.assertEqual(capability.supported_artifact_formats, ("GGUF",))
+        self.assertTrue(capability.runtime_execution_capable)
+        self.assertFalse(capability.llmrig_execution_supported)
+        self.assertFalse(capability.llmrig_benchmark_supported)
 
     def test_llama_cpp_capability_reports_unavailable_without_executable(self):
         with mock.patch.object(llmrig.shutil, "which", return_value=None):
@@ -732,6 +738,9 @@ class LLMRigTests(unittest.TestCase):
         self.assertTrue(mac.available)
         self.assertFalse(linux.available)
         self.assertIn("MLX", mac.supported_artifact_formats)
+        self.assertTrue(mac.runtime_execution_capable)
+        self.assertFalse(mac.llmrig_execution_supported)
+        self.assertFalse(mac.llmrig_benchmark_supported)
 
     def test_mlx_capability_reports_uninstalled(self):
         provider = llmrig.MlxRuntimeProvider()
@@ -910,6 +919,16 @@ class LLMRigTests(unittest.TestCase):
         serialized = json.dumps(first, sort_keys=True)
         self.assertNotIn("private-user", serialized)
         self.assertNotIn("/bin/", serialized)
+
+    def test_runtime_capability_json_names_external_and_llmrig_support_explicitly(self):
+        capability = self.runtime_capability("llama.cpp", "GGUF")
+        payload = capability.to_dict()
+        self.assertTrue(payload["runtime_execution_capable"])
+        self.assertFalse(payload["llmrig_execution_supported"])
+        self.assertFalse(payload["llmrig_benchmark_supported"])
+        self.assertNotIn("execution_supported", payload)
+        self.assertNotIn("benchmark_supported", payload)
+        self.assertNotIn("installation_supported", payload)
 
     def test_curated_can_does_not_call_generic_source(self):
         with mock.patch.object(llmrig.HF_SOURCE, "resolve") as generic_resolve:

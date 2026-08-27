@@ -172,9 +172,10 @@ class RuntimeCapability:
     supported_artifact_formats: Tuple[str, ...]
     supported_platforms: Tuple[str, ...]
     supported_architectures: Tuple[str, ...]
-    installation_supported: bool
-    execution_supported: bool
-    benchmark_supported: bool
+    runtime_execution_capable: bool
+    llmrig_installation_supported: bool
+    llmrig_execution_supported: bool
+    llmrig_benchmark_supported: bool
     confidence: Confidence
     evidence: Tuple[RecommendationEvidence, ...] = ()
     unknowns: Tuple[str, ...] = ()
@@ -188,9 +189,10 @@ class RuntimeCapability:
             "supported_artifact_formats": list(self.supported_artifact_formats),
             "supported_platforms": list(self.supported_platforms),
             "supported_architectures": list(self.supported_architectures),
-            "installation_supported": self.installation_supported,
-            "execution_supported": self.execution_supported,
-            "benchmark_supported": self.benchmark_supported,
+            "runtime_execution_capable": self.runtime_execution_capable,
+            "llmrig_installation_supported": self.llmrig_installation_supported,
+            "llmrig_execution_supported": self.llmrig_execution_supported,
+            "llmrig_benchmark_supported": self.llmrig_benchmark_supported,
             "confidence": self.confidence.value,
             "evidence": [item.to_dict() for item in self.evidence],
             "unknowns": list(self.unknowns),
@@ -1551,9 +1553,10 @@ class OllamaRuntimeProvider:
             supported_artifact_formats=("Ollama",),
             supported_platforms=ALL_PLATFORMS,
             supported_architectures=(),
-            installation_supported=False,
-            execution_supported=True,
-            benchmark_supported=True,
+            runtime_execution_capable=True,
+            llmrig_installation_supported=False,
+            llmrig_execution_supported=True,
+            llmrig_benchmark_supported=True,
             confidence=Confidence.HIGH,
             evidence=tuple(evidence),
             unknowns=unknowns + ("supported architectures are unknown",),
@@ -1626,19 +1629,20 @@ class LlamaCppRuntimeProvider:
             )
         unknowns = () if info["version"] else ("runtime version is unknown",)
         return RuntimeCapability(
-            self.name,
-            installed,
-            available,
-            info["version"],
-            ("GGUF",),
-            ALL_PLATFORMS,
-            (),
-            False,
-            True,
-            False,
-            Confidence.HIGH,
-            evidence,
-            unknowns + ("supported architectures are unknown",),
+            runtime=self.name,
+            installed=installed,
+            available=available,
+            version=info["version"],
+            supported_artifact_formats=("GGUF",),
+            supported_platforms=ALL_PLATFORMS,
+            supported_architectures=(),
+            runtime_execution_capable=True,
+            llmrig_installation_supported=False,
+            llmrig_execution_supported=False,
+            llmrig_benchmark_supported=False,
+            confidence=Confidence.HIGH,
+            evidence=evidence,
+            unknowns=unknowns + ("supported architectures are unknown",),
         )
 
 
@@ -1729,19 +1733,21 @@ class MlxRuntimeProvider:
         elif installed and not command_available:
             blockers.append("the MLX-LM generation command did not pass its health probe")
         return RuntimeCapability(
-            self.name,
-            installed,
-            available,
-            info["version"],
-            ("MLX",),
-            ("Darwin",),
-            ("arm64", "aarch64"),
-            False,
-            True,
-            False,
-            Confidence.HIGH,
-            evidence,
-            tuple(blockers) + (() if info["version"] else ("runtime version is unknown",)),
+            runtime=self.name,
+            installed=installed,
+            available=available,
+            version=info["version"],
+            supported_artifact_formats=("MLX",),
+            supported_platforms=("Darwin",),
+            supported_architectures=("arm64", "aarch64"),
+            runtime_execution_capable=True,
+            llmrig_installation_supported=False,
+            llmrig_execution_supported=False,
+            llmrig_benchmark_supported=False,
+            confidence=Confidence.HIGH,
+            evidence=evidence,
+            unknowns=tuple(blockers)
+            + (() if info["version"] else ("runtime version is unknown",)),
         )
 
 
@@ -2764,7 +2770,7 @@ def runtime_candidates_for_artifacts(
             elif not architecture and capability.supported_architectures:
                 support_status = "architecture_unknown"
                 blockers.append("machine architecture is unknown")
-            elif not capability.execution_supported:
+            elif not capability.runtime_execution_capable:
                 support_status = "execution_unsupported"
                 blockers.append("runtime execution capability is unsupported")
             elif not capability.installed:
