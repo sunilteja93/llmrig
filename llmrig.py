@@ -32,6 +32,10 @@ CURATED_SNAPSHOT_DATE = "2026-08-19"
 DEFAULT_OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 HF_MODELS_API = "https://huggingface.co/api/models"
 CACHE_TTL_SECONDS = 6 * 60 * 60
+RACE_METHOD_VERSION = "race-v1"
+RACE_CONTEXT = 4096
+RACE_NUM_PREDICT = 128
+RACE_NOISE_THRESHOLD = 0.05
 
 OFFICIAL = "official"
 REDUCED_REFUSAL = "community-reduced-refusal"
@@ -227,6 +231,161 @@ class RuntimeCandidate:
         }
 
 
+@dataclass(frozen=True)
+class RaceWorkload:
+    """Small deterministic workload shared by every eligible competitor."""
+
+    prompt: str
+    context: int = RACE_CONTEXT
+    num_predict: int = RACE_NUM_PREDICT
+    runs: int = 2
+    warmup_runs: int = 1
+    warmup_num_predict: int = 32
+    request_timeout_s: int = 120
+    temperature: int = 0
+    seed: int = 42
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "prompt": self.prompt,
+            "context": self.context,
+            "num_predict": self.num_predict,
+            "runs": self.runs,
+            "warmup_runs": self.warmup_runs,
+            "warmup_num_predict": self.warmup_num_predict,
+            "request_timeout_s": self.request_timeout_s,
+            "temperature": self.temperature,
+            "seed": self.seed,
+        }
+
+
+@dataclass(frozen=True)
+class RaceConfiguration:
+    """One local or theoretical runtime/artifact configuration considered for a race."""
+
+    logical_model_id: str
+    runtime: str
+    artifact_id: str
+    artifact_format: str
+    quantization: Optional[str]
+    runtime_version: Optional[str]
+    eligible: bool
+    artifact_fingerprint: Optional[str] = None
+    blockers: Tuple[str, ...] = ()
+    evidence: Tuple[RecommendationEvidence, ...] = ()
+
+    @property
+    def identity(self) -> Tuple[str, str, str, str]:
+        return (
+            self.logical_model_id,
+            self.runtime,
+            self.artifact_fingerprint or self.artifact_id,
+            self.quantization or "unknown",
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "logical_model_id": self.logical_model_id,
+            "runtime": self.runtime,
+            "artifact_id": self.artifact_id,
+            "artifact_fingerprint": self.artifact_fingerprint,
+            "artifact_format": self.artifact_format,
+            "quantization": self.quantization,
+            "runtime_version": self.runtime_version,
+            "eligible": self.eligible,
+            "blockers": list(self.blockers),
+            "evidence": [item.to_dict() for item in self.evidence],
+        }
+
+
+@dataclass(frozen=True)
+class RaceCompetitor:
+    """Measured execution result for one eligible configuration."""
+
+    logical_model_id: str
+    runtime: str
+    artifact_id: str
+    artifact_fingerprint: Optional[str]
+    artifact_format: str
+    quantization: Optional[str]
+    runtime_version: Optional[str]
+    execution_status: str
+    generation_tps: Optional[float]
+    prompt_eval_tps: Optional[float]
+    total_latency_s: Optional[float]
+    generated_tokens: Optional[int]
+    measured_runs: int
+    generation_samples: int
+    prompt_eval_samples: int
+    latency_samples: int
+    timestamp: str
+    evidence: Tuple[RecommendationEvidence, ...] = ()
+    warnings: Tuple[str, ...] = ()
+    failure: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "logical_model_id": self.logical_model_id,
+            "runtime": self.runtime,
+            "artifact_id": self.artifact_id,
+            "artifact_fingerprint": self.artifact_fingerprint,
+            "artifact_format": self.artifact_format,
+            "quantization": self.quantization,
+            "runtime_version": self.runtime_version,
+            "execution_status": self.execution_status,
+            "generation_tps": self.generation_tps,
+            "prompt_eval_tps": self.prompt_eval_tps,
+            "total_latency_s": self.total_latency_s,
+            "generated_tokens": self.generated_tokens,
+            "measured_runs": self.measured_runs,
+            "generation_samples": self.generation_samples,
+            "prompt_eval_samples": self.prompt_eval_samples,
+            "latency_samples": self.latency_samples,
+            "timestamp": self.timestamp,
+            "evidence": [item.to_dict() for item in self.evidence],
+            "warnings": list(self.warnings),
+            "failure": self.failure,
+        }
+
+
+@dataclass(frozen=True)
+class RaceResult:
+    """Structured measured comparison; winners are metric-specific only."""
+
+    status: str
+    logical_model_id: str
+    reason: Optional[str]
+    method_version: str
+    timestamp: str
+    workload: RaceWorkload
+    hardware: Dict[str, Any]
+    eligible_configurations: Tuple[RaceConfiguration, ...]
+    ineligible_configurations: Tuple[RaceConfiguration, ...]
+    competitors: Tuple[RaceCompetitor, ...] = ()
+    warnings: Tuple[str, ...] = ()
+    winners: Tuple[Tuple[str, Dict[str, Any]], ...] = ()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "status": self.status,
+            "logical_model_id": self.logical_model_id,
+            "reason": self.reason,
+            "method_version": self.method_version,
+            "timestamp": self.timestamp,
+            "workload": self.workload.to_dict(),
+            "hardware": dict(self.hardware),
+            "eligible_configurations": [
+                item.to_dict() for item in self.eligible_configurations
+            ],
+            "ineligible_configurations": [
+                item.to_dict() for item in self.ineligible_configurations
+            ],
+            "competitors": [item.to_dict() for item in self.competitors],
+            "warnings": list(self.warnings),
+            "winners": {metric: value for metric, value in self.winners},
+        }
+
+
 class CompatibilityStatus(str, Enum):
     EXCELLENT = "excellent"
     GOOD = "good"
@@ -334,6 +493,16 @@ class RuntimeProvider(Protocol):
     def ensure_available(self, endpoint: Optional[str] = None) -> bool: ...
 
     def capability(self, profile: Dict[str, Any]) -> RuntimeCapability: ...
+
+
+class ExecutionAdapter(Protocol):
+    """Boundary for runtime invocation implemented and controlled by LLMRig."""
+
+    runtime: str
+
+    def benchmark(
+        self, configuration: RaceConfiguration, workload: RaceWorkload
+    ) -> RaceCompetitor: ...
 
 
 ResolvedType = TypeVar("ResolvedType", covariant=True)
@@ -3347,6 +3516,401 @@ def run_benchmark(
     return result
 
 
+class OllamaExecutionAdapter:
+    """Measured Ollama execution using existing bounded generation primitives."""
+
+    runtime = "ollama"
+
+    def __init__(self, host: str = DEFAULT_OLLAMA_HOST) -> None:
+        self.host = host
+
+    def benchmark(
+        self, configuration: RaceConfiguration, workload: RaceWorkload
+    ) -> RaceCompetitor:
+        if not OLLAMA_RUNTIME.is_available(self.host):
+            raise RuntimeError("Ollama service is unavailable")
+        isolate_ollama_for_benchmark(self.host)
+        timed = []
+        try:
+            for _ in range(workload.warmup_runs):
+                ollama_generate(
+                    self.host,
+                    configuration.artifact_id,
+                    workload.prompt,
+                    workload.context,
+                    min(workload.warmup_num_predict, workload.num_predict),
+                    think=False,
+                    timeout=workload.request_timeout_s,
+                )
+            for _ in range(workload.runs):
+                started = time.perf_counter()
+                response = ollama_generate(
+                    self.host,
+                    configuration.artifact_id,
+                    workload.prompt,
+                    workload.context,
+                    workload.num_predict,
+                    think=False,
+                    timeout=workload.request_timeout_s,
+                )
+                metrics = speed_metrics(response)
+                if metrics.get("generation_tps") is None or not metrics.get("eval_count"):
+                    raise RuntimeError("Ollama response did not contain valid generation metrics")
+                metrics["wall_seconds"] = round(time.perf_counter() - started, 4)
+                timed.append(metrics)
+        finally:
+            unload_ollama_model(self.host, configuration.artifact_id)
+
+        if not timed:
+            raise RuntimeError("no measured benchmark runs completed")
+        generation = [
+            item["generation_tps"]
+            for item in timed
+            if item.get("generation_tps") is not None
+        ]
+        prompt = [
+            item["prompt_tps"] for item in timed if item.get("prompt_tps") is not None
+        ]
+        latency = [item["wall_seconds"] for item in timed]
+        generated_tokens = sum(int(item.get("eval_count") or 0) for item in timed)
+        evidence = (
+            RecommendationEvidence(
+                "measured",
+                f"Ollama {configuration.runtime_version or 'version unknown'} local execution",
+                f"{workload.runs} timed run(s) completed with deterministic generation settings",
+            ),
+        )
+        return RaceCompetitor(
+            logical_model_id=configuration.logical_model_id,
+            runtime=configuration.runtime,
+            artifact_id=configuration.artifact_id,
+            artifact_fingerprint=configuration.artifact_fingerprint,
+            artifact_format=configuration.artifact_format,
+            quantization=configuration.quantization,
+            runtime_version=configuration.runtime_version,
+            execution_status="success",
+            generation_tps=(
+                round(sum(generation) / len(generation), 2) if generation else None
+            ),
+            prompt_eval_tps=round(sum(prompt) / len(prompt), 2) if prompt else None,
+            total_latency_s=round(sum(latency) / len(latency), 4) if latency else None,
+            generated_tokens=generated_tokens,
+            measured_runs=len(timed),
+            generation_samples=len(generation),
+            prompt_eval_samples=len(prompt),
+            latency_samples=len(latency),
+            timestamp=now_iso(),
+            evidence=evidence,
+            warnings=("performance measurement does not establish model quality",),
+        )
+
+
+def race_hardware_summary(profile: Dict[str, Any]) -> Dict[str, Any]:
+    """Minimal privacy-safe hardware facts relevant to a local comparison."""
+    return {
+        "os": profile.get("os"),
+        "arch": profile.get("arch"),
+        "cpu": profile.get("cpu"),
+        "ram_gib": profile.get("ram_gib"),
+        "accelerator": accelerator_summary(profile),
+    }
+
+
+def race_safe_runtime_version(value: Optional[str]) -> Optional[str]:
+    """Keep useful version text while excluding anything path-like from race output."""
+    if not value:
+        return None
+    text = " ".join(value.strip().splitlines())[:200]
+    if str(Path.home()) in text or re.search(r"(?:^|\s)(?:[/~]|[A-Za-z]:\\)", text):
+        return None
+    return text
+
+
+def race_configurations(
+    identifier: str,
+    profile: Dict[str, Any],
+    adapters: Sequence[ExecutionAdapter],
+) -> Tuple[str, Tuple[RaceConfiguration, ...], Tuple[RaceConfiguration, ...], Optional[str]]:
+    """Resolve deterministic local eligibility without pulling or downloading anything."""
+    adapter_names = {adapter.runtime for adapter in adapters}
+    capabilities = {item.runtime: item for item in runtime_capabilities(profile)}
+    eligible = []
+    ineligible = []
+    curated = CURATED_SOURCE.resolve(identifier)
+    if curated is not None:
+        logical_model_id = curated.model.model_id
+        installed_items = tuple(installed_ollama_models())
+        installed_names = tuple(item["name"] for item in installed_items)
+        for spec in CURATED_SOURCE.list_specs():
+            if spec.model.model_id != logical_model_id:
+                continue
+            artifact = spec.artifact
+            capability = capabilities.get(artifact.runtime or "")
+            installed_id = installed_id_for_spec(spec, installed_names)
+            installed_fingerprint = next(
+                (
+                    item.get("id") or None
+                    for item in installed_items
+                    if installed_id and item.get("name") == installed_id
+                ),
+                None,
+            )
+            blockers = []
+            if capability is None:
+                blockers.append("runtime capability is unknown")
+            else:
+                if not capability.installed:
+                    blockers.append("runtime is not installed")
+                if not capability.available:
+                    blockers.append("runtime is not currently available")
+                if not capability.llmrig_execution_supported:
+                    blockers.append("LLMRig has no execution adapter for this runtime")
+                if not capability.llmrig_benchmark_supported:
+                    blockers.append("LLMRig has no benchmark adapter for this runtime")
+            if artifact.runtime not in adapter_names:
+                blockers.append("LLMRig execution adapter is unavailable")
+            if installed_id is None:
+                blockers.append("artifact is not installed locally")
+            static = assess_curated_compatibility(spec, profile)
+            if static.can_run is not True:
+                blockers.append(static.reason or "static machine compatibility is unresolved")
+            configuration = RaceConfiguration(
+                logical_model_id=logical_model_id,
+                runtime=artifact.runtime or "unknown",
+                artifact_id=installed_id or artifact.artifact_id,
+                artifact_format=artifact.format,
+                quantization=artifact.quantization,
+                runtime_version=(
+                    race_safe_runtime_version(capability.version) if capability else None
+                ),
+                eligible=not blockers,
+                artifact_fingerprint=installed_fingerprint,
+                blockers=tuple(dict.fromkeys(blockers)),
+                evidence=static.evidence,
+            )
+            (eligible if configuration.eligible else ineligible).append(configuration)
+        reason = None
+    else:
+        compatibility = compatibility_for_identifier(identifier, profile)
+        logical_model_id = compatibility.model_id
+        artifacts = {artifact.artifact_id: artifact for artifact in compatibility.artifacts}
+        for candidate in compatibility.runtime_candidates:
+            artifact = artifacts[candidate.artifact_id]
+            capability = capabilities.get(candidate.runtime)
+            blockers = list(candidate.blockers)
+            if candidate.runtime not in adapter_names:
+                blockers.append("LLMRig execution adapter is unavailable")
+            if capability is None or not capability.llmrig_execution_supported:
+                blockers.append("LLMRig execution is not implemented for this runtime")
+            blockers.append("artifact is not available through a local execution adapter")
+            ineligible.append(
+                RaceConfiguration(
+                    logical_model_id=logical_model_id,
+                    runtime=candidate.runtime,
+                    artifact_id=candidate.artifact_id,
+                    artifact_format=artifact.format,
+                    quantization=artifact.quantization,
+                    runtime_version=(
+                        race_safe_runtime_version(capability.version)
+                        if capability
+                        else None
+                    ),
+                    eligible=False,
+                    blockers=tuple(dict.fromkeys(blockers)),
+                    evidence=candidate.evidence,
+                )
+            )
+        if compatibility.artifacts and not compatibility.runtime_candidates:
+            for artifact in compatibility.artifacts:
+                ineligible.append(
+                    RaceConfiguration(
+                        logical_model_id=logical_model_id,
+                        runtime="unknown",
+                        artifact_id=artifact.artifact_id,
+                        artifact_format=artifact.format,
+                        quantization=artifact.quantization,
+                        runtime_version=None,
+                        eligible=False,
+                        blockers=("no LLMRig execution adapter supports this artifact",),
+                        evidence=artifact.evidence,
+                    )
+                )
+        reason = compatibility.reason if compatibility.resolution_status != "resolved" else None
+
+    return (
+        logical_model_id,
+        unique_race_configurations(eligible),
+        unique_race_configurations(ineligible),
+        reason,
+    )
+
+
+def unique_race_configurations(
+    configurations: Sequence[RaceConfiguration],
+) -> Tuple[RaceConfiguration, ...]:
+    """Deterministically collapse aliases for the same actual execution identity."""
+    unique: Dict[Tuple[str, str, str, str], RaceConfiguration] = {}
+    for configuration in sorted(
+        configurations, key=lambda item: (item.runtime, item.artifact_id)
+    ):
+        unique.setdefault(configuration.identity, configuration)
+    return tuple(sorted(unique.values(), key=lambda item: (item.runtime, item.artifact_id)))
+
+
+def metric_winner(
+    competitors: Sequence[RaceCompetitor],
+    attribute: str,
+    higher_is_better: bool,
+) -> Dict[str, Any]:
+    measured = [item for item in competitors if getattr(item, attribute) is not None]
+    if len(measured) < 2:
+        return {"status": "inconclusive", "reason": "fewer than two measured values"}
+    sample_attribute = {
+        "generation_tps": "generation_samples",
+        "prompt_eval_tps": "prompt_eval_samples",
+        "total_latency_s": "latency_samples",
+    }[attribute]
+    if any(getattr(item, sample_attribute) < 2 for item in measured):
+        return {
+            "status": "inconclusive",
+            "reason": "fewer than two valid samples per competitor",
+        }
+    ordered = sorted(
+        measured,
+        key=lambda item: (
+            -float(getattr(item, attribute))
+            if higher_is_better
+            else float(getattr(item, attribute)),
+            item.runtime,
+            item.artifact_id,
+        ),
+    )
+    best, second = ordered[0], ordered[1]
+    best_value = float(getattr(best, attribute))
+    second_value = float(getattr(second, attribute))
+    scale = max(abs(best_value), abs(second_value), 1e-12)
+    if abs(best_value - second_value) / scale <= RACE_NOISE_THRESHOLD:
+        return {
+            "status": "inconclusive",
+            "reason": "leading results are within the 5% noise threshold",
+        }
+    return {
+        "status": "winner",
+        "runtime": best.runtime,
+        "artifact_id": best.artifact_id,
+        "value": getattr(best, attribute),
+    }
+
+
+def execute_race(
+    logical_model_id: str,
+    eligible: Sequence[RaceConfiguration],
+    ineligible: Sequence[RaceConfiguration],
+    adapters: Sequence[ExecutionAdapter],
+    workload: RaceWorkload,
+    hardware: Dict[str, Any],
+    resolution_reason: Optional[str] = None,
+    timestamp: Optional[str] = None,
+) -> RaceResult:
+    """Measure eligible configurations or return a structured unavailable result."""
+    ordered_eligible = unique_race_configurations(eligible)
+    ordered_ineligible = unique_race_configurations(ineligible)
+    started_at = timestamp or now_iso()
+    if len(ordered_eligible) < 2:
+        return RaceResult(
+            "unavailable",
+            logical_model_id,
+            resolution_reason
+            or f"{len(ordered_eligible)} executable configuration(s) found; at least 2 are required",
+            RACE_METHOD_VERSION,
+            started_at,
+            workload,
+            hardware,
+            ordered_eligible,
+            ordered_ineligible,
+        )
+
+    adapter_by_runtime = {adapter.runtime: adapter for adapter in adapters}
+    competitors = []
+    for configuration in ordered_eligible:
+        adapter = adapter_by_runtime[configuration.runtime]
+        try:
+            competitors.append(adapter.benchmark(configuration, workload))
+        except subprocess.TimeoutExpired:
+            competitors.append(failed_race_competitor(configuration, "benchmark timed out"))
+        except Exception:
+            competitors.append(failed_race_competitor(configuration, "benchmark execution failed"))
+    ordered_competitors = tuple(
+        sorted(competitors, key=lambda item: (item.runtime, item.artifact_id))
+    )
+    failures = [item for item in ordered_competitors if item.execution_status != "success"]
+    quantizations = {item.quantization or "unknown" for item in ordered_competitors}
+    formats = {item.artifact_format for item in ordered_competitors}
+    warnings = []
+    if len(quantizations) > 1:
+        warnings.append("competitors use different quantizations; speed results are not artifact-equivalent")
+    if len(formats) > 1:
+        warnings.append("competitors use different artifact formats; results compare executable configurations, not identical artifacts")
+    if failures:
+        return RaceResult(
+            "failed",
+            logical_model_id,
+            "one or more benchmark executions failed; comparison is invalid",
+            RACE_METHOD_VERSION,
+            started_at,
+            workload,
+            hardware,
+            ordered_eligible,
+            ordered_ineligible,
+            ordered_competitors,
+            tuple(warnings),
+        )
+    winners = (
+        ("fastest_generation", metric_winner(ordered_competitors, "generation_tps", True)),
+        ("fastest_prompt_evaluation", metric_winner(ordered_competitors, "prompt_eval_tps", True)),
+        ("lowest_latency", metric_winner(ordered_competitors, "total_latency_s", False)),
+    )
+    return RaceResult(
+        "completed",
+        logical_model_id,
+        None,
+        RACE_METHOD_VERSION,
+        started_at,
+        workload,
+        hardware,
+        ordered_eligible,
+        ordered_ineligible,
+        ordered_competitors,
+        tuple(warnings),
+        winners,
+    )
+
+
+def failed_race_competitor(
+    configuration: RaceConfiguration, failure: str
+) -> RaceCompetitor:
+    return RaceCompetitor(
+        configuration.logical_model_id,
+        configuration.runtime,
+        configuration.artifact_id,
+        configuration.artifact_fingerprint,
+        configuration.artifact_format,
+        configuration.quantization,
+        configuration.runtime_version,
+        "failed",
+        None,
+        None,
+        None,
+        None,
+        0,
+        0,
+        0,
+        0,
+        now_iso(),
+        failure=failure,
+    )
+
+
 # ---------------------------------------------------------------------------
 # CLI commands
 # ---------------------------------------------------------------------------
@@ -3791,6 +4355,98 @@ def command_bench(args: argparse.Namespace) -> int:
     return 1 if failures else 0
 
 
+def race_exit_code(result: RaceResult) -> int:
+    return 0 if result.status == "completed" else 1 if result.status == "failed" else 2
+
+
+def print_race_result(result: RaceResult) -> None:
+    print(f"\n{PROJECT_NAME} runtime race")
+    print("-------------------")
+    print(f"Model:  {result.logical_model_id}")
+    print(f"Status: {result.status}")
+    if result.reason:
+        print(f"Reason: {result.reason}")
+
+    print(f"\nExecutable configurations: {len(result.eligible_configurations)}")
+    for item in result.eligible_configurations:
+        print(f"- Runtime: {item.runtime}")
+        print(f"  Build: {item.artifact_id}")
+        print(f"  Format: {item.artifact_format}")
+        print(f"  Quantization: {item.quantization or 'unknown'}")
+        print(f"  Runtime version: {item.runtime_version or 'unknown'}")
+
+    if result.ineligible_configurations:
+        print("\nIneligible/theoretical configurations")
+        for item in result.ineligible_configurations:
+            print(f"- {item.runtime}: {item.artifact_id}")
+            for blocker in item.blockers:
+                print(f"  Blocker: {blocker}")
+
+    if result.competitors:
+        print("\nMeasured competitors")
+        for item in result.competitors:
+            print(f"- {item.runtime}: {item.artifact_id}")
+            print(f"  Execution: {item.execution_status}")
+            if item.execution_status == "success":
+                print(f"  Generation: {item.generation_tps} tok/s")
+                print(f"  Prompt evaluation: {item.prompt_eval_tps} tok/s")
+                print(f"  Mean wall latency: {item.total_latency_s} s")
+                print(f"  Generated tokens: {item.generated_tokens}")
+            elif item.failure:
+                print(f"  Failure: {item.failure}")
+    for warning in result.warnings:
+        print(f"\nWarning: {warning}")
+    if result.winners:
+        print("\nMetric results")
+        for metric, winner in result.winners:
+            label = metric.replace("_", " ").capitalize()
+            if winner.get("status") == "winner":
+                print(
+                    f"- {label}: {winner['runtime']} / {winner['artifact_id']} "
+                    f"({winner['value']})"
+                )
+            else:
+                print(f"- {label}: inconclusive ({winner.get('reason')})")
+
+
+def command_race(args: argparse.Namespace) -> int:
+    if args.runs < 1 or args.runs > 5:
+        eprint("race --runs must be between 1 and 5")
+        return 2
+    if args.context < 1 or args.context > 32_768:
+        eprint("race --context must be between 1 and 32768")
+        return 2
+    if args.num_predict < 1 or args.num_predict > 512:
+        eprint("race --num-predict must be between 1 and 512")
+        return 2
+
+    profile = hardware_profile()
+    adapters: Tuple[ExecutionAdapter, ...] = (OllamaExecutionAdapter(args.host),)
+    logical_id, eligible, ineligible, resolution_reason = race_configurations(
+        args.model, profile, adapters
+    )
+    workload = RaceWorkload(
+        prompt=SPEED_PROMPT,
+        context=args.context,
+        num_predict=args.num_predict,
+        runs=args.runs,
+    )
+    result = execute_race(
+        logical_id,
+        eligible,
+        ineligible,
+        adapters,
+        workload,
+        race_hardware_summary(profile),
+        resolution_reason,
+    )
+    if args.json:
+        print(json.dumps(result.to_dict(), indent=2))
+    else:
+        print_race_result(result)
+    return race_exit_code(result)
+
+
 def command_check(args: argparse.Namespace) -> int:
     """Run project sanity checks without downloading a model."""
     errors = validate_curated_catalog()
@@ -3970,6 +4626,16 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--host", default=DEFAULT_OLLAMA_HOST)
     bench.add_argument("--output-dir")
 
+    race = subparsers.add_parser(
+        "race", help="Compare at least two locally executable configurations."
+    )
+    race.add_argument("model", help="Curated ID/alias or owner/repository identifier.")
+    race.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
+    race.add_argument("--context", type=int, default=RACE_CONTEXT)
+    race.add_argument("--runs", type=int, default=2)
+    race.add_argument("--num-predict", type=int, default=RACE_NUM_PREDICT)
+    race.add_argument("--host", default=DEFAULT_OLLAMA_HOST)
+
     check = subparsers.add_parser("check", help="Run project sanity checks without a model download.")
     check.add_argument(
         "--online",
@@ -4004,6 +4670,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return command_setup(args)
     if args.command == "bench":
         return command_bench(args)
+    if args.command == "race":
+        return command_race(args)
     if args.command == "check":
         return command_check(args)
 

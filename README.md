@@ -143,6 +143,26 @@ context, and performance remain explicitly unknown.
 modes: exit `0` means the model can run, exit `1` means it cannot run, and exit
 `2` means compatibility is unknown or the identifier cannot be analyzed.
 
+### Race locally executable configurations
+
+```bash
+llmrig race qwen3.8:27b-mlx
+llmrig race qwen3.8:27b-mlx --json
+```
+
+`race` measures only configurations that are already local, currently available,
+and backed by an LLMRig execution/benchmark adapter. It never installs runtimes or
+downloads artifacts. At least two executable configurations are required; otherwise
+the command reports the eligible and blocked alternatives without running a benchmark.
+Phase 5 supports Ollama execution only. llama.cpp and MLX-LM remain capability-only.
+
+Exit `0` means at least two competitors were measured successfully. Exit `1` means
+an attempted execution failed and invalidated the comparison. Exit `2` means the race
+is unavailable or the model could not be resolved. Winners are reported separately
+for measured generation throughput, prompt-evaluation throughput, and latency; there
+is no composite score or model-quality claim. Results within 5% are treated as
+inconclusive, and at least two timed runs per competitor are required for a winner.
+
 ### List models
 
 Show curated local-ready models plus the newest live Qwen LLM/multimodal candidates:

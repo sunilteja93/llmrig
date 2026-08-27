@@ -3,6 +3,7 @@ import importlib.util
 import io
 import json
 import os
+import subprocess
 import sys
 import unittest
 from unittest import mock
@@ -91,6 +92,62 @@ class LLMRigTests(unittest.TestCase):
         return llmrig.ModelResolution(
             "resolved", model, artifacts, llmrig.Confidence.HIGH
         )
+
+    def race_configuration(
+        self,
+        runtime="ollama",
+        artifact="model:a",
+        quantization="Q4_K_M",
+        fingerprint=None,
+    ):
+        return llmrig.RaceConfiguration(
+            logical_model_id="logical/model",
+            runtime=runtime,
+            artifact_id=artifact,
+            artifact_format="GGUF",
+            quantization=quantization,
+            runtime_version="1.2.3",
+            eligible=True,
+            artifact_fingerprint=fingerprint,
+        )
+
+    def race_competitor(
+        self,
+        runtime="ollama",
+        artifact="model:a",
+        quantization="Q4_K_M",
+        generation=50.0,
+        prompt=100.0,
+        latency=2.0,
+        runs=2,
+    ):
+        return llmrig.RaceCompetitor(
+            logical_model_id="logical/model",
+            runtime=runtime,
+            artifact_id=artifact,
+            artifact_fingerprint=None,
+            artifact_format="GGUF",
+            quantization=quantization,
+            runtime_version="1.2.3",
+            execution_status="success",
+            generation_tps=generation,
+            prompt_eval_tps=prompt,
+            total_latency_s=latency,
+            generated_tokens=256,
+            measured_runs=runs,
+            generation_samples=runs if generation is not None else 0,
+            prompt_eval_samples=runs if prompt is not None else 0,
+            latency_samples=runs if latency is not None else 0,
+            timestamp="2026-01-01T00:00:00+00:00",
+            evidence=(
+                llmrig.RecommendationEvidence(
+                    "measured", "mock runtime", "two timed runs completed"
+                ),
+            ),
+        )
+
+    def race_workload(self):
+        return llmrig.RaceWorkload("deterministic prompt", runs=2)
 
     def test_project_branding(self):
         self.assertEqual(llmrig.PROJECT_NAME, "LLMRig")
@@ -961,6 +1018,387 @@ class LLMRigTests(unittest.TestCase):
             isolated = llmrig.isolate_ollama_for_benchmark("http://127.0.0.1:11434")
         self.assertEqual(isolated, ["model-a:latest", "model-b:latest"])
         self.assertEqual(unload.call_count, 2)
+
+    def test_race_with_zero_eligible_configurations_is_unavailable(self):
+        adapter = mock.Mock(runtime="ollama")
+        result = llmrig.execute_race(
+            "logical/model",
+            (),
+            (),
+            (adapter,),
+            self.race_workload(),
+            {},
+            timestamp="fixed",
+        )
+        self.assertEqual(result.status, "unavailable")
+        self.assertEqual(llmrig.race_exit_code(result), 2)
+        adapter.benchmark.assert_not_called()
+
+    def test_race_with_one_eligible_configuration_does_not_benchmark(self):
+        adapter = mock.Mock(runtime="ollama")
+        result = llmrig.execute_race(
+            "logical/model",
+            (self.race_configuration(),),
+            (),
+            (adapter,),
+            self.race_workload(),
+            {},
+            timestamp="fixed",
+        )
+        self.assertEqual(result.status, "unavailable")
+        self.assertIn("at least 2", result.reason)
+        adapter.benchmark.assert_not_called()
+
+    def test_race_aliases_with_same_artifact_fingerprint_count_once(self):
+        configurations = (
+            self.race_configuration(artifact="model:alias-a", fingerprint="digest-1"),
+            self.race_configuration(artifact="model:alias-b", fingerprint="digest-1"),
+        )
+        adapter = mock.Mock(runtime="ollama")
+        result = llmrig.execute_race(
+            "logical/model",
+            configurations,
+            (),
+            (adapter,),
+            self.race_workload(),
+            {},
+            timestamp="fixed",
+        )
+        self.assertEqual(result.status, "unavailable")
+        self.assertEqual(len(result.eligible_configurations), 1)
+        self.assertEqual(result.eligible_configurations[0].artifact_id, "model:alias-a")
+        adapter.benchmark.assert_not_called()
+
+    def test_race_with_two_successful_configurations_has_metric_winners(self):
+        configurations = (
+            self.race_configuration(artifact="model:b"),
+            self.race_configuration(artifact="model:a"),
+        )
+        results = {
+            "model:a": self.race_competitor(
+                artifact="model:a", generation=60.0, prompt=90.0, latency=2.0
+            ),
+            "model:b": self.race_competitor(
+                artifact="model:b", generation=40.0, prompt=120.0, latency=3.0
+            ),
+        }
+        adapter = mock.Mock(runtime="ollama")
+        adapter.benchmark.side_effect = lambda config, workload: results[config.artifact_id]
+        result = llmrig.execute_race(
+            "logical/model",
+            configurations,
+            (),
+            (adapter,),
+            self.race_workload(),
+            {},
+            timestamp="fixed",
+        )
+        winners = result.to_dict()["winners"]
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(llmrig.race_exit_code(result), 0)
+        self.assertEqual(winners["fastest_generation"]["artifact_id"], "model:a")
+        self.assertEqual(
+            winners["fastest_prompt_evaluation"]["artifact_id"], "model:b"
+        )
+        self.assertEqual(winners["lowest_latency"]["artifact_id"], "model:a")
+
+    def test_race_one_competitor_failure_invalidates_comparison(self):
+        configurations = (
+            self.race_configuration(artifact="model:a"),
+            self.race_configuration(artifact="model:b"),
+        )
+        adapter = mock.Mock(runtime="ollama")
+        adapter.benchmark.side_effect = [
+            self.race_competitor(artifact="model:a"),
+            RuntimeError("private token should not leak"),
+        ]
+        result = llmrig.execute_race(
+            "logical/model", configurations, (), (adapter,), self.race_workload(), {}, timestamp="fixed"
+        )
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(llmrig.race_exit_code(result), 1)
+        self.assertNotIn("private token", json.dumps(result.to_dict()))
+        self.assertEqual(result.competitors[1].failure, "benchmark execution failed")
+
+    def test_race_two_successes_plus_one_failure_retains_all_without_winners(self):
+        configurations = tuple(
+            self.race_configuration(artifact=f"model:{name}") for name in ("a", "b", "c")
+        )
+        adapter = mock.Mock(runtime="ollama")
+        adapter.benchmark.side_effect = [
+            self.race_competitor(artifact="model:a", generation=60.0),
+            self.race_competitor(artifact="model:b", generation=50.0),
+            RuntimeError("failed"),
+        ]
+        result = llmrig.execute_race(
+            "logical/model", configurations, (), (adapter,), self.race_workload(), {}, timestamp="fixed"
+        )
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(llmrig.race_exit_code(result), 1)
+        self.assertEqual(len(result.competitors), 3)
+        self.assertEqual(
+            [item.execution_status for item in result.competitors],
+            ["success", "success", "failed"],
+        )
+        self.assertEqual(result.winners, ())
+
+    def test_race_both_competitors_failure_is_structured(self):
+        configurations = (
+            self.race_configuration(artifact="model:a"),
+            self.race_configuration(artifact="model:b"),
+        )
+        adapter = mock.Mock(runtime="ollama")
+        adapter.benchmark.side_effect = RuntimeError("failure")
+        result = llmrig.execute_race(
+            "logical/model", configurations, (), (adapter,), self.race_workload(), {}, timestamp="fixed"
+        )
+        self.assertEqual(result.status, "failed")
+        self.assertTrue(all(item.execution_status == "failed" for item in result.competitors))
+
+    def test_race_timeout_is_reported_without_exception_details(self):
+        configurations = (
+            self.race_configuration(artifact="model:a"),
+            self.race_configuration(artifact="model:b"),
+        )
+        adapter = mock.Mock(runtime="ollama")
+        adapter.benchmark.side_effect = subprocess.TimeoutExpired(["safe"], 120)
+        result = llmrig.execute_race(
+            "logical/model", configurations, (), (adapter,), self.race_workload(), {}, timestamp="fixed"
+        )
+        self.assertTrue(all(item.failure == "benchmark timed out" for item in result.competitors))
+
+    def test_race_competitor_and_json_ordering_are_deterministic(self):
+        configurations = (
+            self.race_configuration(runtime="z-runtime", artifact="z"),
+            self.race_configuration(runtime="a-runtime", artifact="a"),
+        )
+        adapters = []
+        for configuration in configurations:
+            adapter = mock.Mock(runtime=configuration.runtime)
+            adapter.benchmark.return_value = self.race_competitor(
+                runtime=configuration.runtime, artifact=configuration.artifact_id
+            )
+            adapters.append(adapter)
+        kwargs = dict(
+            logical_model_id="logical/model",
+            ineligible=(),
+            adapters=adapters,
+            workload=self.race_workload(),
+            hardware={"os": "Test"},
+            timestamp="fixed",
+        )
+        first = llmrig.execute_race(eligible=configurations, **kwargs).to_dict()
+        second = llmrig.execute_race(eligible=tuple(reversed(configurations)), **kwargs).to_dict()
+        self.assertEqual(first, second)
+        self.assertEqual([item["runtime"] for item in first["competitors"]], ["a-runtime", "z-runtime"])
+
+    def test_race_ties_and_single_run_are_inconclusive(self):
+        close = (
+            self.race_competitor(artifact="a", generation=100.0),
+            self.race_competitor(artifact="b", generation=103.0),
+        )
+        self.assertEqual(
+            llmrig.metric_winner(close, "generation_tps", True)["status"],
+            "inconclusive",
+        )
+        one_run = tuple(
+            llmrig.replace(item, measured_runs=1, generation_samples=1)
+            for item in close
+        )
+        self.assertIn(
+            "fewer than two valid samples",
+            llmrig.metric_winner(one_run, "generation_tps", True)["reason"],
+        )
+        self.assertEqual(
+            llmrig.metric_winner(tuple(reversed(close)), "generation_tps", True),
+            llmrig.metric_winner(close, "generation_tps", True),
+        )
+
+    def test_missing_prompt_metrics_do_not_block_generation_winner(self):
+        competitors = (
+            self.race_competitor(artifact="a", generation=70.0, prompt=None),
+            self.race_competitor(artifact="b", generation=50.0, prompt=100.0),
+        )
+        generation = llmrig.metric_winner(competitors, "generation_tps", True)
+        prompt = llmrig.metric_winner(competitors, "prompt_eval_tps", True)
+        self.assertEqual(generation["status"], "winner")
+        self.assertEqual(generation["artifact_id"], "a")
+        self.assertEqual(prompt["status"], "inconclusive")
+
+    def test_race_warns_when_quantizations_differ(self):
+        configurations = (
+            self.race_configuration(artifact="a", quantization="Q4"),
+            self.race_configuration(artifact="b", quantization="Q8"),
+        )
+        adapter = mock.Mock(runtime="ollama")
+        adapter.benchmark.side_effect = [
+            self.race_competitor(artifact="a", quantization="Q4"),
+            self.race_competitor(artifact="b", quantization="Q8", generation=70.0),
+        ]
+        result = llmrig.execute_race(
+            "logical/model", configurations, (), (adapter,), self.race_workload(), {}, timestamp="fixed"
+        )
+        self.assertTrue(any("different quantizations" in item for item in result.warnings))
+
+    def test_race_warns_when_artifact_formats_differ(self):
+        configurations = (
+            self.race_configuration(runtime="runtime-a", artifact="a"),
+            llmrig.replace(
+                self.race_configuration(runtime="runtime-b", artifact="b"),
+                artifact_format="MLX",
+            ),
+        )
+        adapters = []
+        for configuration in configurations:
+            adapter = mock.Mock(runtime=configuration.runtime)
+            adapter.benchmark.return_value = llmrig.replace(
+                self.race_competitor(
+                    runtime=configuration.runtime, artifact=configuration.artifact_id
+                ),
+                artifact_format=configuration.artifact_format,
+            )
+            adapters.append(adapter)
+        result = llmrig.execute_race(
+            "logical/model", configurations, (), adapters, self.race_workload(), {}, timestamp="fixed"
+        )
+        self.assertTrue(any("different artifact formats" in item for item in result.warnings))
+
+    def test_race_command_json_one_competitor_returns_two_without_execution(self):
+        configuration = self.race_configuration()
+        args = llmrig.argparse.Namespace(
+            model="logical/model",
+            json=True,
+            context=4096,
+            runs=2,
+            num_predict=128,
+            host="http://127.0.0.1:11434",
+        )
+        output = io.StringIO()
+        with mock.patch.object(llmrig, "hardware_profile", return_value=self.mac_profile()), mock.patch.object(
+            llmrig, "race_configurations", return_value=("logical/model", (configuration,), (), None)
+        ), mock.patch.object(llmrig.OllamaExecutionAdapter, "benchmark") as benchmark, contextlib.redirect_stdout(output):
+            self.assertEqual(llmrig.command_race(args), 2)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["status"], "unavailable")
+        self.assertEqual(len(payload["eligible_configurations"]), 1)
+        benchmark.assert_not_called()
+
+    def test_existing_bench_command_still_uses_existing_benchmark_path(self):
+        args = llmrig.argparse.Namespace(
+            host="http://127.0.0.1:11434",
+            all_installed=False,
+            model="qwen3:8b",
+            context=4096,
+            runs=1,
+            output_dir=None,
+        )
+        with mock.patch.object(llmrig.OLLAMA_RUNTIME, "ensure_available", return_value=True), mock.patch.object(
+            llmrig, "run_benchmark", return_value={"aggregate": {}}
+        ) as benchmark:
+            self.assertEqual(llmrig.command_bench(args), 0)
+        benchmark.assert_called_once_with(
+            "qwen3:8b", 4096, 1, args.host, None
+        )
+
+    def test_ollama_execution_adapter_reuses_bounded_generation_and_cleans_up(self):
+        response = {
+            "eval_count": 100,
+            "eval_duration": 2_000_000_000,
+            "prompt_eval_count": 20,
+            "prompt_eval_duration": 1_000_000_000,
+            "total_duration": 3_000_000_000,
+        }
+        adapter = llmrig.OllamaExecutionAdapter("http://127.0.0.1:11434")
+        configuration = self.race_configuration()
+        with mock.patch.object(llmrig.OLLAMA_RUNTIME, "is_available", return_value=True), mock.patch.object(
+            llmrig, "isolate_ollama_for_benchmark", return_value=[]
+        ), mock.patch.object(
+            llmrig, "ollama_generate", return_value=response
+        ) as generate, mock.patch.object(
+            llmrig, "unload_ollama_model", return_value=True
+        ) as unload:
+            result = adapter.benchmark(configuration, self.race_workload())
+        self.assertEqual(result.execution_status, "success")
+        self.assertEqual(result.generation_tps, 50.0)
+        self.assertEqual(result.generated_tokens, 200)
+        self.assertEqual(generate.call_count, 3)
+        self.assertTrue(all(call.kwargs["timeout"] == 120 for call in generate.call_args_list))
+        unload.assert_called_once_with(adapter.host, configuration.artifact_id)
+
+    def test_ollama_warmup_failure_is_not_a_successful_competitor(self):
+        adapter = llmrig.OllamaExecutionAdapter("http://127.0.0.1:11434")
+        configurations = (
+            self.race_configuration(artifact="model:a"),
+            self.race_configuration(artifact="model:b"),
+        )
+        with mock.patch.object(llmrig.OLLAMA_RUNTIME, "is_available", return_value=True), mock.patch.object(
+            llmrig, "isolate_ollama_for_benchmark", return_value=[]
+        ), mock.patch.object(
+            llmrig, "ollama_generate", side_effect=RuntimeError("warmup failed")
+        ), mock.patch.object(llmrig, "unload_ollama_model", return_value=True) as unload:
+            result = llmrig.execute_race(
+                "logical/model", configurations, (), (adapter,), self.race_workload(), {}, timestamp="fixed"
+            )
+        self.assertEqual(result.status, "failed")
+        self.assertTrue(all(item.execution_status == "failed" for item in result.competitors))
+        self.assertEqual(unload.call_count, 2)
+
+    def test_invalid_generation_metrics_fail_competitor_and_cleanup(self):
+        adapter = llmrig.OllamaExecutionAdapter("http://127.0.0.1:11434")
+        configuration = self.race_configuration()
+        response = {"eval_count": 0, "eval_duration": 0}
+        with mock.patch.object(llmrig.OLLAMA_RUNTIME, "is_available", return_value=True), mock.patch.object(
+            llmrig, "isolate_ollama_for_benchmark", return_value=[]
+        ), mock.patch.object(
+            llmrig, "ollama_generate", return_value=response
+        ), mock.patch.object(llmrig, "unload_ollama_model", return_value=True) as unload:
+            with self.assertRaises(RuntimeError):
+                adapter.benchmark(configuration, self.race_workload())
+        unload.assert_called_once_with(adapter.host, configuration.artifact_id)
+
+    def test_race_eligibility_never_pulls_or_downloads_models(self):
+        adapter = mock.Mock(runtime="ollama")
+        capability = llmrig.replace(
+            self.runtime_capability("ollama", "Ollama"),
+            llmrig_execution_supported=True,
+            llmrig_benchmark_supported=True,
+        )
+        with mock.patch.object(llmrig, "runtime_capabilities", return_value=(capability,)), mock.patch.object(
+            llmrig, "installed_ollama_models", return_value=[]
+        ), mock.patch.object(llmrig, "pull_model") as pull:
+            _, eligible, ineligible, _ = llmrig.race_configurations(
+                "qwen3.8:27b-mlx", self.mac_profile(), (adapter,)
+            )
+        self.assertEqual(eligible, ())
+        self.assertTrue(ineligible)
+        pull.assert_not_called()
+
+    def test_race_json_is_privacy_safe_and_records_runtime_version(self):
+        configuration = self.race_configuration()
+        result = llmrig.execute_race(
+            "logical/model",
+            (configuration,),
+            (),
+            (),
+            self.race_workload(),
+            {"cpu": "Test CPU"},
+            timestamp="fixed",
+        )
+        serialized = json.dumps(result.to_dict())
+        self.assertIn("1.2.3", serialized)
+        self.assertNotIn(str(Path.home()), serialized)
+
+    def test_race_runtime_version_rejects_local_paths(self):
+        self.assertIsNone(
+            llmrig.race_safe_runtime_version("build /Users/private-user/llama")
+        )
+        self.assertIsNone(llmrig.race_safe_runtime_version("build C:\\private\\llama"))
+        self.assertEqual(llmrig.race_safe_runtime_version("runtime 1.2.3"), "runtime 1.2.3")
+
+    def test_run_cmd_never_enables_shell(self):
+        with mock.patch.object(llmrig.subprocess, "run") as run:
+            llmrig.run_cmd(["safe-command", "--version"])
+        self.assertFalse(run.call_args.kwargs.get("shell", False))
 
 
     def test_shareable_hardware_profile_removes_model_store(self):
