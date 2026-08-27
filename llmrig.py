@@ -18,8 +18,9 @@ import urllib.parse
 import urllib.request
 import webbrowser
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Protocol, Sequence, Tuple
 
 PROJECT_NAME = "LLMRig"
 PROJECT_SLUG = "llmrig"
@@ -48,9 +49,154 @@ LIVE_NON_LLM_HINTS = (
 )
 
 
+class Confidence(str, Enum):
+    """Categorical confidence for compatibility and recommendation facts."""
+
+    VERIFIED = "verified"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class RecommendationEvidence:
+    """One attributable fact used to make a recommendation."""
+
+    kind: str
+    source: str
+    detail: str
+
+    def __post_init__(self) -> None:
+        if not self.kind.strip():
+            raise ValueError("evidence kind must not be empty")
+        if not self.source.strip():
+            raise ValueError("evidence source must not be empty")
+        if not self.detail.strip():
+            raise ValueError("evidence detail must not be empty")
+
+    def to_dict(self) -> Dict[str, str]:
+        return {"kind": self.kind, "source": self.source, "detail": self.detail}
+
+
+@dataclass(frozen=True)
+class Model:
+    """A logical model, independent of any runnable packaging."""
+
+    model_id: str
+    name: str
+    params_b: Optional[float]
+    modalities: Tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not self.model_id.strip() or not self.name.strip():
+            raise ValueError("model id and name must not be empty")
+        if self.params_b is not None and self.params_b <= 0:
+            raise ValueError("model parameter count must be positive when known")
+        if not self.modalities or any(not item.strip() for item in self.modalities):
+            raise ValueError("model modalities must not be empty")
+
+
+@dataclass(frozen=True)
+class ModelArtifact:
+    """A concrete model package intended for a particular runtime."""
+
+    artifact_id: str
+    model_id: str
+    runtime: str
+    format: str
+    size_gb: Optional[float]
+    context_max: Optional[int]
+    platforms: Tuple[str, ...]
+    aliases: Tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.artifact_id.strip() or not self.model_id.strip():
+            raise ValueError("artifact id and model id must not be empty")
+        if not self.runtime.strip() or not self.format.strip():
+            raise ValueError("artifact runtime and format must not be empty")
+        if self.size_gb is not None and self.size_gb <= 0:
+            raise ValueError("artifact size must be positive when known")
+        if self.context_max is not None and self.context_max <= 0:
+            raise ValueError("artifact context must be positive when known")
+        if not self.platforms:
+            raise ValueError("artifact must support at least one platform")
+        if self.artifact_id in self.aliases or len(set(self.aliases)) != len(self.aliases):
+            raise ValueError("artifact aliases must be unique and exclude the primary id")
+
+    @property
+    def ids(self) -> Tuple[str, ...]:
+        return (self.artifact_id,) + self.aliases
+
+
+class CompatibilityStatus(str, Enum):
+    EXCELLENT = "excellent"
+    GOOD = "good"
+    POSSIBLE = "possible/spill"
+    NOT_NATIVE = "not native"
+    TOO_LARGE = "too large"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class CompatibilityResult:
+    """Evidence-aware compatibility assessment; unknown remains explicit."""
+
+    model_id: str
+    artifact_id: Optional[str]
+    runtime: Optional[str]
+    status: CompatibilityStatus
+    confidence: Confidence
+    evidence: Tuple[RecommendationEvidence, ...] = ()
+    reason: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if not self.model_id.strip():
+            raise ValueError("compatibility result model id must not be empty")
+        status_unknown = self.status == CompatibilityStatus.UNKNOWN
+        confidence_unknown = self.confidence == Confidence.UNKNOWN
+        if status_unknown != confidence_unknown:
+            raise ValueError("unknown status and confidence must be represented together")
+        if not status_unknown and not self.evidence:
+            raise ValueError("known compatibility status requires evidence")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "model_id": self.model_id,
+            "artifact_id": self.artifact_id,
+            "runtime": self.runtime,
+            "status": self.status.value,
+            "confidence": self.confidence.value,
+            "evidence": [item.to_dict() for item in self.evidence],
+            "reason": self.reason,
+        }
+
+
+class RuntimeProvider(Protocol):
+    """Minimum runtime boundary used by current readiness/setup behavior."""
+
+    name: str
+
+    def info(self) -> Dict[str, Any]: ...
+
+    def is_available(self, endpoint: Optional[str] = None) -> bool: ...
+
+    def ensure_available(self, endpoint: Optional[str] = None) -> bool: ...
+
+
+class ModelSource(Protocol):
+    """Minimum source boundary used by the curated catalog."""
+
+    name: str
+
+    def list_specs(self) -> Sequence["ModelSpec"]: ...
+
+    def resolve(self, identifier: str) -> Optional["ModelSpec"]: ...
+
+
 @dataclass(frozen=True)
 class ModelSpec:
-    """A trusted local model identifier that LLMRig may auto-pull."""
+    """Backward-compatible curated entry joining a logical model and artifact."""
 
     name: str
     ollama: str
@@ -68,8 +214,33 @@ class ModelSpec:
     aliases: Tuple[str, ...] = ()
 
     @property
+    def model(self) -> Model:
+        # The family-level identifier deliberately excludes the Ollama tag while
+        # retaining the namespace for community derivatives.
+        model_id = self.ollama.split(":", 1)[0]
+        return Model(
+            model_id=model_id,
+            name=self.name,
+            params_b=self.params_b,
+            modalities=tuple(item.strip() for item in self.modalities.split(",")),
+        )
+
+    @property
+    def artifact(self) -> ModelArtifact:
+        return ModelArtifact(
+            artifact_id=self.ollama,
+            model_id=self.model.model_id,
+            runtime="ollama",
+            format=self.quant,
+            size_gb=self.size_gb,
+            context_max=self.context_max,
+            platforms=self.platforms,
+            aliases=self.aliases,
+        )
+
+    @property
     def ids(self) -> Tuple[str, ...]:
-        return (self.ollama,) + self.aliases
+        return self.artifact.ids
 
 
 ALL_PLATFORMS = ("Darwin", "Linux", "Windows")
@@ -992,6 +1163,16 @@ def nearest_existing_path(path: Path) -> Path:
     return current
 
 
+def privacy_safe_path(path: Path) -> str:
+    """Hide the current home directory identity while preserving a useful path."""
+    expanded = path.expanduser()
+    try:
+        relative = expanded.relative_to(Path.home())
+    except ValueError:
+        return str(expanded)
+    return str(Path("~") / relative)
+
+
 def hardware_profile() -> Dict[str, Any]:
     total = get_total_ram_bytes()
     available = get_available_ram_bytes()
@@ -1155,6 +1336,24 @@ def ensure_ollama_service(host: str = DEFAULT_OLLAMA_HOST) -> bool:
     return False
 
 
+class OllamaRuntimeProvider:
+    """Runtime adapter preserving the current Ollama implementation."""
+
+    name = "ollama"
+
+    def info(self) -> Dict[str, Any]:
+        return ollama_cli_info()
+
+    def is_available(self, endpoint: Optional[str] = None) -> bool:
+        return ollama_api_alive(endpoint or DEFAULT_OLLAMA_HOST)
+
+    def ensure_available(self, endpoint: Optional[str] = None) -> bool:
+        return ensure_ollama_service(endpoint or DEFAULT_OLLAMA_HOST)
+
+
+OLLAMA_RUNTIME: RuntimeProvider = OllamaRuntimeProvider()
+
+
 def installed_ollama_models() -> List[Dict[str, str]]:
     if not command_exists("ollama"):
         return []
@@ -1182,11 +1381,29 @@ def installed_ollama_models() -> List[Dict[str, str]]:
     return output
 
 
+class CuratedModelSource:
+    """Trusted local snapshot; the only source currently eligible for auto-pull."""
+
+    name = "curated"
+
+    def __init__(self, specs: Sequence[ModelSpec]) -> None:
+        self._specs = tuple(specs)
+
+    def list_specs(self) -> Sequence[ModelSpec]:
+        return self._specs
+
+    def resolve(self, identifier: str) -> Optional[ModelSpec]:
+        for model in self._specs:
+            if identifier in model.artifact.ids:
+                return model
+        return None
+
+
+CURATED_SOURCE: ModelSource = CuratedModelSource(CURATED_MODELS)
+
+
 def resolve_curated_model(identifier: str) -> Optional[ModelSpec]:
-    for model in CURATED_MODELS:
-        if identifier in model.ids:
-            return model
-    return None
+    return CURATED_SOURCE.resolve(identifier)
 
 
 def installed_id_for_spec(model: ModelSpec, installed_names: Iterable[str]) -> Optional[str]:
@@ -1512,22 +1729,61 @@ def live_rows(
 
 
 def fit_label(model: ModelSpec, profile: Dict[str, Any]) -> str:
+    return assess_curated_compatibility(model, profile).status.value
+
+
+def assess_curated_compatibility(
+    model: ModelSpec, profile: Dict[str, Any]
+) -> CompatibilityResult:
+    """Assess a verified curated artifact with conservative deterministic heuristics."""
     budget = model_budget_gb(profile)
     ram = safe_float(profile.get("ram_gib"))
-    if profile.get("os") not in model.platforms:
-        return "not native"
-    if model.size_gb <= budget * 0.75:
-        return "excellent"
-    if model.size_gb <= budget:
-        return "good"
-    if model.size_gb <= ram * 0.80:
-        return "possible/spill"
-    return "too large"
+    artifact = model.artifact
+    evidence = (
+        RecommendationEvidence(
+            "curated-metadata",
+            f"curated snapshot {CURATED_SNAPSHOT_DATE}",
+            "artifact size, runtime, platform, and context are curated",
+        ),
+        RecommendationEvidence(
+            "deterministic-estimate",
+            "local hardware profile",
+            "model-weight budget is calculated with conservative headroom",
+        ),
+    )
+    if not profile.get("os") or not ram:
+        return CompatibilityResult(
+            model.model.model_id,
+            artifact.artifact_id,
+            artifact.runtime,
+            CompatibilityStatus.UNKNOWN,
+            Confidence.UNKNOWN,
+            evidence[:1],
+            "hardware platform or memory is unknown",
+        )
+    if profile.get("os") not in artifact.platforms:
+        status = CompatibilityStatus.NOT_NATIVE
+    elif model.size_gb <= budget * 0.75:
+        status = CompatibilityStatus.EXCELLENT
+    elif model.size_gb <= budget:
+        status = CompatibilityStatus.GOOD
+    elif model.size_gb <= ram * 0.80:
+        status = CompatibilityStatus.POSSIBLE
+    else:
+        status = CompatibilityStatus.TOO_LARGE
+    return CompatibilityResult(
+        model.model.model_id,
+        artifact.artifact_id,
+        artifact.runtime,
+        status,
+        Confidence.HIGH,
+        evidence,
+    )
 
 
 def print_curated(profile: Optional[Dict[str, Any]] = None) -> None:
     rows: List[Dict[str, Any]] = []
-    for model in CURATED_MODELS:
+    for model in CURATED_SOURCE.list_specs():
         aliases = ", ".join(model.aliases) if model.aliases else "-"
         rows.append(
             {
@@ -1571,7 +1827,7 @@ def candidate_models(profile: Dict[str, Any], category: str) -> List[ModelSpec]:
     disk_free = safe_float((profile.get("disk") or {}).get("free_gib"))
 
     output: List[ModelSpec] = []
-    for model in CURATED_MODELS:
+    for model in CURATED_SOURCE.list_specs():
         if not model.recommendable:
             continue
         if model.category != category:
@@ -2019,12 +2275,15 @@ def run_benchmark(
 
 
 def print_doctor(profile: Dict[str, Any], json_mode: bool = False) -> None:
-    ollama = ollama_cli_info()
+    ollama = OLLAMA_RUNTIME.info()
+    raw_model_store = profile.get("model_store")
+    model_store = privacy_safe_path(Path(str(raw_model_store))) if raw_model_store else ""
 
     if json_mode:
         payload = dict(profile)
+        payload["model_store"] = model_store
         payload["ollama"] = ollama
-        payload["ollama_api_alive"] = ollama_api_alive()
+        payload["ollama_api_alive"] = OLLAMA_RUNTIME.is_available()
         payload["viability"] = viability_label(profile)
         payload["model_weight_budget_gb"] = round(model_budget_gb(profile), 1)
         print(json.dumps(payload, indent=2))
@@ -2040,12 +2299,12 @@ def print_doctor(profile: Dict[str, Any], json_mode: bool = False) -> None:
     if profile.get("swap_used_gib") is not None:
         print(f"Swap used:   {profile.get('swap_used_gib')} GiB")
     print(f"Accelerator: {accelerator_summary(profile)}")
-    print(f"Model store: {profile.get('model_store')}")
+    print(f"Model store: {model_store}")
     print(f"Free disk:   {profile.get('disk', {}).get('free_gib')} GiB")
     print(
         f"Ollama:      {ollama.get('version') if ollama.get('installed') else 'not installed'}"
     )
-    print(f"Ollama API:  {'ready' if ollama_api_alive() else 'not responding'}")
+    print(f"Ollama API:  {'ready' if OLLAMA_RUNTIME.is_available() else 'not responding'}")
     print(f"\nAssessment:  {viability_label(profile)}")
     print(
         "Planning model-weight budget: "
@@ -2188,12 +2447,12 @@ def command_recommend(args: argparse.Namespace) -> int:
 def command_setup(args: argparse.Namespace) -> int:
     profile = hardware_profile()
     print_doctor(profile)
-    ollama = ollama_cli_info()
+    ollama = OLLAMA_RUNTIME.info()
 
     if not ollama.get("installed"):
         install_ollama_help(args.open_installer)
         return 2
-    if not ensure_ollama_service(args.host):
+    if not OLLAMA_RUNTIME.ensure_available(args.host):
         eprint(
             "Ollama is installed but its localhost API is unavailable. "
             "Launch Ollama or run `ollama serve`."
@@ -2284,7 +2543,7 @@ def command_setup(args: argparse.Namespace) -> int:
 
 
 def command_bench(args: argparse.Namespace) -> int:
-    if not ensure_ollama_service(args.host):
+    if not OLLAMA_RUNTIME.ensure_available(args.host):
         eprint("Ollama API is not available.")
         return 2
 

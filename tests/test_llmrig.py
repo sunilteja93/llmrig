@@ -1,4 +1,8 @@
+import contextlib
 import importlib.util
+import io
+import json
+import os
 import sys
 import unittest
 from unittest import mock
@@ -36,6 +40,94 @@ class LLMRigTests(unittest.TestCase):
 
     def test_catalog_is_valid(self):
         self.assertEqual(llmrig.validate_curated_catalog(), [])
+
+    def test_curated_spec_separates_model_from_artifact(self):
+        spec = llmrig.resolve_curated_model("qwen3.8:27b-mlx")
+        self.assertIsNotNone(spec)
+        self.assertEqual(spec.model.model_id, "qwen3.8")
+        self.assertEqual(spec.model.modalities, ("text", "image"))
+        self.assertEqual(spec.artifact.artifact_id, spec.ollama)
+        self.assertEqual(spec.artifact.runtime, "ollama")
+        self.assertEqual(spec.artifact.format, "MLX")
+
+    def test_model_and_artifact_reject_invalid_known_values(self):
+        with self.assertRaises(ValueError):
+            llmrig.Model("model", "Model", 0, ("text",))
+        with self.assertRaises(ValueError):
+            llmrig.ModelArtifact(
+                "artifact", "model", "ollama", "Q4", None, None, ()
+            )
+
+    def test_evidence_requires_provenance_and_serializes(self):
+        evidence = llmrig.RecommendationEvidence(
+            "curated-metadata", "snapshot", "artifact size is known"
+        )
+        self.assertEqual(
+            evidence.to_dict(),
+            {
+                "kind": "curated-metadata",
+                "source": "snapshot",
+                "detail": "artifact size is known",
+            },
+        )
+        with self.assertRaises(ValueError):
+            llmrig.RecommendationEvidence("estimate", "", "detail")
+
+    def test_compatibility_result_serialization_is_explicit(self):
+        result = llmrig.CompatibilityResult(
+            "qwen3.8",
+            "qwen3.8:27b-mlx",
+            "ollama",
+            llmrig.CompatibilityStatus.GOOD,
+            llmrig.Confidence.HIGH,
+            (
+                llmrig.RecommendationEvidence(
+                    "curated-metadata", "snapshot", "artifact is known"
+                ),
+            ),
+        )
+        self.assertEqual(
+            result.to_dict(),
+            {
+                "model_id": "qwen3.8",
+                "artifact_id": "qwen3.8:27b-mlx",
+                "runtime": "ollama",
+                "status": "good",
+                "confidence": "high",
+                "evidence": [
+                    {
+                        "kind": "curated-metadata",
+                        "source": "snapshot",
+                        "detail": "artifact is known",
+                    }
+                ],
+                "reason": None,
+            },
+        )
+
+    def test_unknown_hardware_stays_unknown(self):
+        spec = llmrig.resolve_curated_model("qwen3:8b")
+        result = llmrig.assess_curated_compatibility(spec, {})
+        self.assertEqual(result.status, llmrig.CompatibilityStatus.UNKNOWN)
+        self.assertEqual(result.confidence, llmrig.Confidence.UNKNOWN)
+
+    def test_known_compatibility_requires_evidence(self):
+        with self.assertRaises(ValueError):
+            llmrig.CompatibilityResult(
+                "qwen3",
+                "qwen3:8b",
+                "ollama",
+                llmrig.CompatibilityStatus.GOOD,
+                llmrig.Confidence.HIGH,
+            )
+
+    def test_fit_label_preserves_existing_output_through_domain_result(self):
+        spec = llmrig.resolve_curated_model("qwen3.8:27b-mlx")
+        result = llmrig.assess_curated_compatibility(spec, self.mac_profile())
+        self.assertEqual(result.status, llmrig.CompatibilityStatus.EXCELLENT)
+        self.assertEqual(llmrig.fit_label(spec, self.mac_profile()), "excellent")
+        self.assertEqual(result.artifact_id, spec.artifact.artifact_id)
+        self.assertTrue(result.evidence)
 
     def test_alignment_aliases(self):
         self.assertEqual(llmrig.normalize_category("official"), llmrig.OFFICIAL)
@@ -192,6 +284,48 @@ class LLMRigTests(unittest.TestCase):
             info = llmrig.shareable_ollama_info()
         self.assertEqual(info["version"], "0.32.13")
         self.assertNotIn("path", info)
+
+    def test_default_model_store_is_displayed_relative_to_home(self):
+        home = Path("/Users/private-user")
+        with mock.patch.object(llmrig.Path, "home", return_value=home), mock.patch.dict(
+            os.environ, {"OLLAMA_MODELS": ""}
+        ):
+            model_store = llmrig.ollama_model_store_path()
+            self.assertEqual(
+                llmrig.privacy_safe_path(model_store),
+                str(Path("~") / ".ollama" / "models"),
+            )
+
+    def test_custom_model_store_outside_home_remains_meaningful(self):
+        home = Path("/Users/private-user")
+        custom = home.parent / "shared-ollama-models"
+        with mock.patch.object(llmrig.Path, "home", return_value=home), mock.patch.dict(
+            os.environ, {"OLLAMA_MODELS": str(custom)}
+        ):
+            model_store = llmrig.ollama_model_store_path()
+            self.assertEqual(model_store, custom)
+            self.assertEqual(llmrig.privacy_safe_path(model_store), str(custom))
+
+    def test_doctor_json_hides_home_directory_identity(self):
+        home = Path("/Users/private-user")
+        profile = {
+            "model_store": str(home / ".ollama" / "models"),
+            "ram_gib": 48.0,
+            "os": "Darwin",
+            "gpus": [],
+        }
+        output = io.StringIO()
+        with mock.patch.object(llmrig.Path, "home", return_value=home), mock.patch.object(
+            llmrig.OLLAMA_RUNTIME, "info", return_value={"installed": False}
+        ), mock.patch.object(
+            llmrig.OLLAMA_RUNTIME, "is_available", return_value=False
+        ), contextlib.redirect_stdout(output):
+            llmrig.print_doctor(profile, json_mode=True)
+
+        serialized = output.getvalue()
+        payload = json.loads(serialized)
+        self.assertEqual(payload["model_store"], str(Path("~") / ".ollama" / "models"))
+        self.assertNotIn("private-user", serialized)
 
 if __name__ == "__main__":
     unittest.main()
