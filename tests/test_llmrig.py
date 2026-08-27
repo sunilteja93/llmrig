@@ -33,6 +33,65 @@ class LLMRigTests(unittest.TestCase):
             "disk": {"free_gib": 500.0},
         }
 
+    def runtime_capability(
+        self, runtime, artifact_format, installed=True, available=True
+    ):
+        return llmrig.RuntimeCapability(
+            runtime=runtime,
+            installed=installed,
+            available=available,
+            version="1.0" if installed else None,
+            supported_artifact_formats=(artifact_format,),
+            supported_platforms=llmrig.ALL_PLATFORMS,
+            supported_architectures=(),
+            runtime_execution_capable=True,
+            llmrig_installation_supported=False,
+            llmrig_execution_supported=False,
+            llmrig_benchmark_supported=False,
+            confidence=llmrig.Confidence.HIGH,
+            evidence=(
+                llmrig.RecommendationEvidence(
+                    "verified-local-runtime", "test runtime", "runtime was detected"
+                ),
+            ),
+            unknowns=("successful inference is unknown",),
+        )
+
+    def generic_resolution(self, artifact_format="GGUF", size_bytes=4_000_000_000):
+        model = llmrig.Model("org/model", "model", None, ("text",))
+        artifact = llmrig.ModelArtifact(
+            f"hf://org/model/{artifact_format.lower()}",
+            model.model_id,
+            None,
+            artifact_format,
+            size_bytes / 1_000_000_000 if size_bytes else None,
+            None,
+            (),
+            size_bytes=size_bytes,
+        )
+        return llmrig.ModelResolution(
+            "resolved", model, (artifact,), llmrig.Confidence.HIGH
+        )
+
+    def multi_artifact_resolution(self, sizes):
+        model = llmrig.Model("org/model", "model", None, ("text",))
+        artifacts = tuple(
+            llmrig.ModelArtifact(
+                f"hf://org/model/artifact-{index}.gguf",
+                model.model_id,
+                None,
+                "GGUF",
+                size / 1_000_000_000 if size else None,
+                None,
+                (),
+                size_bytes=size,
+            )
+            for index, size in enumerate(sizes)
+        )
+        return llmrig.ModelResolution(
+            "resolved", model, artifacts, llmrig.Confidence.HIGH
+        )
+
     def test_project_branding(self):
         self.assertEqual(llmrig.PROJECT_NAME, "LLMRig")
         self.assertEqual(llmrig.PROJECT_SLUG, "llmrig")
@@ -592,6 +651,284 @@ class LLMRigTests(unittest.TestCase):
         self.assertIn("Format: GGUF", rendered)
         self.assertIn("Quantization: Q4_K_M", rendered)
         self.assertIn("Runtime: unknown", rendered)
+
+    def test_ollama_capability_distinguishes_installed_from_available(self):
+        provider = llmrig.OllamaRuntimeProvider()
+        with mock.patch.object(
+            provider, "info", return_value={"installed": True, "version": "0.12.0"}
+        ), mock.patch.object(provider, "is_available", return_value=False):
+            capability = provider.capability(self.mac_profile())
+        self.assertTrue(capability.installed)
+        self.assertFalse(capability.available)
+        self.assertTrue(capability.runtime_execution_capable)
+        self.assertTrue(capability.llmrig_execution_supported)
+        self.assertTrue(capability.llmrig_benchmark_supported)
+        self.assertEqual(capability.supported_artifact_formats, ("Ollama",))
+
+    def test_ollama_capability_reports_uninstalled(self):
+        provider = llmrig.OllamaRuntimeProvider()
+        with mock.patch.object(
+            provider, "info", return_value={"installed": False, "version": None}
+        ):
+            capability = provider.capability(self.mac_profile())
+        self.assertFalse(capability.installed)
+        self.assertFalse(capability.available)
+
+    def test_llama_cpp_capability_detects_versioned_executable(self):
+        process = mock.Mock(returncode=0, stdout="llama.cpp version 999\n", stderr="")
+        with mock.patch.object(
+            llmrig.shutil, "which", side_effect=lambda name: "/bin/llama-cli" if name == "llama-cli" else None
+        ), mock.patch.object(llmrig, "run_cmd", return_value=process):
+            capability = llmrig.LlamaCppRuntimeProvider().capability(
+                self.linux_cpu_profile()
+            )
+        self.assertTrue(capability.installed)
+        self.assertTrue(capability.available)
+        self.assertEqual(capability.supported_artifact_formats, ("GGUF",))
+        self.assertTrue(capability.runtime_execution_capable)
+        self.assertFalse(capability.llmrig_execution_supported)
+        self.assertFalse(capability.llmrig_benchmark_supported)
+
+    def test_llama_cpp_capability_reports_unavailable_without_executable(self):
+        with mock.patch.object(llmrig.shutil, "which", return_value=None):
+            capability = llmrig.LlamaCppRuntimeProvider().capability(
+                self.linux_cpu_profile()
+            )
+        self.assertFalse(capability.installed)
+        self.assertFalse(capability.available)
+
+    def test_runtime_command_on_path_without_successful_probe_is_unavailable(self):
+        process = mock.Mock(returncode=1, stdout="", stderr="probe failed")
+        with mock.patch.object(
+            llmrig.shutil, "which", return_value="/private/path/llama-cli"
+        ), mock.patch.object(llmrig, "run_cmd", return_value=process):
+            capability = llmrig.LlamaCppRuntimeProvider().capability(
+                self.linux_cpu_profile()
+            )
+        self.assertTrue(capability.installed)
+        self.assertFalse(capability.available)
+        self.assertIsNone(capability.version)
+
+    def test_runtime_version_output_hides_home_path(self):
+        process = mock.Mock(
+            returncode=0,
+            stdout=str(Path.home() / "private-build" / "llama.cpp 1.0"),
+            stderr="",
+        )
+        with mock.patch.object(llmrig, "run_cmd", return_value=process):
+            version = llmrig.detected_runtime_version("llama-cli")
+        self.assertIsNotNone(version)
+        self.assertNotIn(str(Path.home()), version)
+        self.assertTrue(version.startswith("~"))
+
+    def test_mlx_capability_is_available_only_on_supported_platform(self):
+        provider = llmrig.MlxRuntimeProvider()
+        with mock.patch.object(
+            provider,
+            "info",
+            return_value={
+                "installed": True,
+                "command_installed": True,
+                "command_available": True,
+                "version": "0.29.0",
+            },
+        ):
+            mac = provider.capability({**self.mac_profile(), "arch": "arm64"})
+            linux = provider.capability({**self.linux_cpu_profile(), "arch": "x86_64"})
+        self.assertTrue(mac.available)
+        self.assertFalse(linux.available)
+        self.assertIn("MLX", mac.supported_artifact_formats)
+        self.assertTrue(mac.runtime_execution_capable)
+        self.assertFalse(mac.llmrig_execution_supported)
+        self.assertFalse(mac.llmrig_benchmark_supported)
+
+    def test_mlx_capability_reports_uninstalled(self):
+        provider = llmrig.MlxRuntimeProvider()
+        with mock.patch.object(
+            provider,
+            "info",
+            return_value={
+                "installed": False,
+                "command_installed": False,
+                "command_available": False,
+                "version": None,
+            },
+        ):
+            capability = provider.capability({**self.mac_profile(), "arch": "arm64"})
+        self.assertFalse(capability.installed)
+        self.assertFalse(capability.available)
+
+    def test_gguf_with_available_llama_cpp_produces_practical_candidate(self):
+        capability = self.runtime_capability("llama.cpp", "GGUF")
+        with mock.patch.object(llmrig, "runtime_capabilities", return_value=(capability,)):
+            result = llmrig.assess_generic_runtime_compatibility(
+                self.generic_resolution(), self.mac_profile()
+            )
+        self.assertTrue(result.can_run)
+        self.assertEqual(result.runtime, "llama.cpp")
+        self.assertEqual(result.runtime_candidates[0].support_status, "available")
+        self.assertEqual(result.runtime_candidates[0].fit_result, "fits")
+        self.assertIsNone(result.recommended_context)
+
+    def test_mlx_with_available_mlx_lm_produces_runtime_candidate(self):
+        capability = self.runtime_capability("mlx-lm", "MLX")
+        with mock.patch.object(llmrig, "runtime_capabilities", return_value=(capability,)):
+            result = llmrig.assess_generic_runtime_compatibility(
+                self.generic_resolution("MLX"), self.mac_profile()
+            )
+        self.assertTrue(result.can_run)
+        self.assertEqual(result.runtime, "mlx-lm")
+
+    def test_safetensors_alone_has_no_runtime_candidate(self):
+        capabilities = (
+            self.runtime_capability("llama.cpp", "GGUF"),
+            self.runtime_capability("mlx-lm", "MLX"),
+        )
+        with mock.patch.object(llmrig, "runtime_capabilities", return_value=capabilities):
+            result = llmrig.assess_generic_runtime_compatibility(
+                self.generic_resolution("Safetensors"), self.mac_profile()
+            )
+        self.assertIsNone(result.can_run)
+        self.assertEqual(result.runtime_candidates, ())
+
+    def test_recognized_artifact_with_unavailable_runtime_stays_unknown(self):
+        capability = self.runtime_capability(
+            "llama.cpp", "GGUF", installed=False, available=False
+        )
+        with mock.patch.object(llmrig, "runtime_capabilities", return_value=(capability,)):
+            result = llmrig.assess_generic_runtime_compatibility(
+                self.generic_resolution(), self.mac_profile()
+            )
+        self.assertIsNone(result.can_run)
+        self.assertEqual(
+            result.runtime_candidates[0].support_status, "runtime_not_installed"
+        )
+
+    def test_available_runtime_with_oversized_artifact_returns_no(self):
+        capability = self.runtime_capability("llama.cpp", "GGUF")
+        with mock.patch.object(llmrig, "runtime_capabilities", return_value=(capability,)):
+            result = llmrig.assess_generic_runtime_compatibility(
+                self.generic_resolution(size_bytes=80_000_000_000), self.mac_profile()
+            )
+        self.assertFalse(result.can_run)
+        self.assertEqual(result.status, llmrig.CompatibilityStatus.TOO_LARGE)
+
+    def test_available_runtime_with_unknown_artifact_size_stays_unknown(self):
+        capability = self.runtime_capability("llama.cpp", "GGUF")
+        with mock.patch.object(llmrig, "runtime_capabilities", return_value=(capability,)):
+            result = llmrig.assess_generic_runtime_compatibility(
+                self.generic_resolution(size_bytes=None), self.mac_profile()
+            )
+        self.assertIsNone(result.can_run)
+        self.assertIn("artifact size", result.unknowns[0])
+
+    def test_aggregate_yes_wins_over_unknown_candidate(self):
+        capability = self.runtime_capability("llama.cpp", "GGUF")
+        with mock.patch.object(llmrig, "runtime_capabilities", return_value=(capability,)):
+            result = llmrig.assess_generic_runtime_compatibility(
+                self.multi_artifact_resolution((4_000_000_000, None)),
+                self.mac_profile(),
+            )
+        self.assertTrue(result.can_run)
+        self.assertEqual(
+            [candidate.fit_result for candidate in result.runtime_candidates],
+            ["fits", "unknown"],
+        )
+
+    def test_aggregate_yes_wins_over_oversized_candidate(self):
+        capability = self.runtime_capability("llama.cpp", "GGUF")
+        with mock.patch.object(llmrig, "runtime_capabilities", return_value=(capability,)):
+            result = llmrig.assess_generic_runtime_compatibility(
+                self.multi_artifact_resolution((4_000_000_000, 80_000_000_000)),
+                self.mac_profile(),
+            )
+        self.assertTrue(result.can_run)
+
+    def test_aggregate_all_oversized_candidates_returns_no(self):
+        capability = self.runtime_capability("llama.cpp", "GGUF")
+        with mock.patch.object(llmrig, "runtime_capabilities", return_value=(capability,)):
+            result = llmrig.assess_generic_runtime_compatibility(
+                self.multi_artifact_resolution((70_000_000_000, 80_000_000_000)),
+                self.mac_profile(),
+            )
+        self.assertFalse(result.can_run)
+        self.assertTrue(
+            all(candidate.fit_result == "too_large" for candidate in result.runtime_candidates)
+        )
+
+    def test_aggregate_oversized_plus_unknown_size_returns_unknown(self):
+        capability = self.runtime_capability("llama.cpp", "GGUF")
+        with mock.patch.object(llmrig, "runtime_capabilities", return_value=(capability,)):
+            result = llmrig.assess_generic_runtime_compatibility(
+                self.multi_artifact_resolution((80_000_000_000, None)),
+                self.mac_profile(),
+            )
+        self.assertIsNone(result.can_run)
+
+    def test_known_platform_incompatibility_can_rule_out_every_path(self):
+        capability = llmrig.replace(
+            self.runtime_capability("mlx-lm", "MLX"),
+            supported_platforms=("Darwin",),
+            supported_architectures=("arm64",),
+        )
+        profile = {**self.linux_cpu_profile(), "arch": "x86_64"}
+        with mock.patch.object(llmrig, "runtime_capabilities", return_value=(capability,)):
+            result = llmrig.assess_generic_runtime_compatibility(
+                self.generic_resolution("MLX", size_bytes=None), profile
+            )
+        self.assertFalse(result.can_run)
+        self.assertEqual(result.status, llmrig.CompatibilityStatus.NOT_NATIVE)
+        self.assertEqual(
+            result.runtime_candidates[0].support_status, "platform_incompatible"
+        )
+
+    def test_installed_but_unavailable_runtime_remains_unknown(self):
+        capability = self.runtime_capability(
+            "llama.cpp", "GGUF", installed=True, available=False
+        )
+        with mock.patch.object(llmrig, "runtime_capabilities", return_value=(capability,)):
+            result = llmrig.assess_generic_runtime_compatibility(
+                self.generic_resolution(), self.mac_profile()
+            )
+        self.assertIsNone(result.can_run)
+        self.assertEqual(
+            result.runtime_candidates[0].support_status, "runtime_unavailable"
+        )
+
+    def test_runtime_and_compatibility_confidence_remain_separate(self):
+        capability = self.runtime_capability("llama.cpp", "GGUF")
+        with mock.patch.object(llmrig, "runtime_capabilities", return_value=(capability,)):
+            result = llmrig.assess_generic_runtime_compatibility(
+                self.generic_resolution(size_bytes=None), self.mac_profile()
+            )
+        payload = result.to_dict()
+        self.assertEqual(payload["resolution_confidence"], "high")
+        self.assertEqual(payload["runtime_candidates"][0]["confidence"], "high")
+        self.assertEqual(payload["compatibility_confidence"], "unknown")
+
+    def test_runtime_candidate_json_is_deterministic_and_privacy_safe(self):
+        capability = self.runtime_capability("llama.cpp", "GGUF")
+        with mock.patch.object(llmrig, "runtime_capabilities", return_value=(capability,)):
+            first = llmrig.assess_generic_runtime_compatibility(
+                self.generic_resolution(), self.mac_profile()
+            ).to_dict()
+            second = llmrig.assess_generic_runtime_compatibility(
+                self.generic_resolution(), self.mac_profile()
+            ).to_dict()
+        self.assertEqual(first, second)
+        serialized = json.dumps(first, sort_keys=True)
+        self.assertNotIn("private-user", serialized)
+        self.assertNotIn("/bin/", serialized)
+
+    def test_runtime_capability_json_names_external_and_llmrig_support_explicitly(self):
+        capability = self.runtime_capability("llama.cpp", "GGUF")
+        payload = capability.to_dict()
+        self.assertTrue(payload["runtime_execution_capable"])
+        self.assertFalse(payload["llmrig_execution_supported"])
+        self.assertFalse(payload["llmrig_benchmark_supported"])
+        self.assertNotIn("execution_supported", payload)
+        self.assertNotIn("benchmark_supported", payload)
+        self.assertNotIn("installation_supported", payload)
 
     def test_curated_can_does_not_call_generic_source(self):
         with mock.patch.object(llmrig.HF_SOURCE, "resolve") as generic_resolve:

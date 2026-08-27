@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 import ctypes
 import datetime as dt
+import importlib.metadata
+import importlib.util
 import json
 import os
 import platform
@@ -159,6 +161,72 @@ class ModelArtifact:
         }
 
 
+@dataclass(frozen=True)
+class RuntimeCapability:
+    """Read-only description of a locally detectable runtime's capabilities."""
+
+    runtime: str
+    installed: bool
+    available: bool
+    version: Optional[str]
+    supported_artifact_formats: Tuple[str, ...]
+    supported_platforms: Tuple[str, ...]
+    supported_architectures: Tuple[str, ...]
+    runtime_execution_capable: bool
+    llmrig_installation_supported: bool
+    llmrig_execution_supported: bool
+    llmrig_benchmark_supported: bool
+    confidence: Confidence
+    evidence: Tuple[RecommendationEvidence, ...] = ()
+    unknowns: Tuple[str, ...] = ()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "runtime": self.runtime,
+            "installed": self.installed,
+            "available": self.available,
+            "version": self.version,
+            "supported_artifact_formats": list(self.supported_artifact_formats),
+            "supported_platforms": list(self.supported_platforms),
+            "supported_architectures": list(self.supported_architectures),
+            "runtime_execution_capable": self.runtime_execution_capable,
+            "llmrig_installation_supported": self.llmrig_installation_supported,
+            "llmrig_execution_supported": self.llmrig_execution_supported,
+            "llmrig_benchmark_supported": self.llmrig_benchmark_supported,
+            "confidence": self.confidence.value,
+            "evidence": [item.to_dict() for item in self.evidence],
+            "unknowns": list(self.unknowns),
+        }
+
+
+@dataclass(frozen=True)
+class RuntimeCandidate:
+    """An evidenced runtime/artifact match, not a promise of successful inference."""
+
+    runtime: str
+    artifact_id: str
+    artifact_format: str
+    support_status: str
+    fit_result: str
+    confidence: Confidence
+    evidence: Tuple[RecommendationEvidence, ...]
+    blockers: Tuple[str, ...] = ()
+    unknowns: Tuple[str, ...] = ()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "runtime": self.runtime,
+            "artifact_id": self.artifact_id,
+            "artifact_format": self.artifact_format,
+            "support_status": self.support_status,
+            "fit_result": self.fit_result,
+            "confidence": self.confidence.value,
+            "evidence": [item.to_dict() for item in self.evidence],
+            "blockers": list(self.blockers),
+            "unknowns": list(self.unknowns),
+        }
+
+
 class CompatibilityStatus(str, Enum):
     EXCELLENT = "excellent"
     GOOD = "good"
@@ -192,6 +260,8 @@ class CompatibilityResult:
     resolution_status: Optional[str] = None
     resolution_confidence: Optional[Confidence] = None
     resolved_model: Optional[Model] = None
+    runtime_candidates: Tuple[RuntimeCandidate, ...] = ()
+    runtime_capabilities: Tuple[RuntimeCapability, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.model_id.strip():
@@ -243,6 +313,12 @@ class CompatibilityResult:
             )
             payload["model"] = self.resolved_model.to_dict() if self.resolved_model else None
             payload["artifacts"] = [artifact.to_dict() for artifact in self.artifacts]
+            payload["runtime_candidates"] = [
+                candidate.to_dict() for candidate in self.runtime_candidates
+            ]
+            payload["runtime_capabilities"] = [
+                capability.to_dict() for capability in self.runtime_capabilities
+            ]
         return payload
 
 
@@ -256,6 +332,8 @@ class RuntimeProvider(Protocol):
     def is_available(self, endpoint: Optional[str] = None) -> bool: ...
 
     def ensure_available(self, endpoint: Optional[str] = None) -> bool: ...
+
+    def capability(self, profile: Dict[str, Any]) -> RuntimeCapability: ...
 
 
 ResolvedType = TypeVar("ResolvedType", covariant=True)
@@ -1386,8 +1464,8 @@ def ollama_cli_info() -> Dict[str, Any]:
     try:
         process = run_cmd(["ollama", "--version"], timeout=10)
         result["version"] = (process.stdout or process.stderr).strip()
-    except Exception as exc:
-        result["version"] = f"unknown ({exc})"
+    except Exception:
+        result["version"] = "unknown"
     return result
 
 
@@ -1439,8 +1517,253 @@ class OllamaRuntimeProvider:
     def ensure_available(self, endpoint: Optional[str] = None) -> bool:
         return ensure_ollama_service(endpoint or DEFAULT_OLLAMA_HOST)
 
+    def capability(self, profile: Dict[str, Any]) -> RuntimeCapability:
+        info = self.info()
+        installed = bool(info.get("installed"))
+        available = installed and self.is_available()
+        evidence = []
+        evidence.append(
+            RecommendationEvidence(
+                "verified-local-runtime",
+                "Ollama CLI detection",
+                (
+                    "the Ollama command is installed locally"
+                    if installed
+                    else "the Ollama command was not detected locally"
+                ),
+            )
+        )
+        if available:
+            evidence.append(
+                RecommendationEvidence(
+                    "verified-local-runtime",
+                    "Ollama version API",
+                    "the local Ollama service responded to its version endpoint",
+                )
+            )
+        version = info.get("version")
+        if isinstance(version, str) and version.startswith("unknown ("):
+            version = None
+        unknowns = () if version else ("runtime version is unknown",)
+        return RuntimeCapability(
+            runtime=self.name,
+            installed=installed,
+            available=available,
+            version=version,
+            supported_artifact_formats=("Ollama",),
+            supported_platforms=ALL_PLATFORMS,
+            supported_architectures=(),
+            runtime_execution_capable=True,
+            llmrig_installation_supported=False,
+            llmrig_execution_supported=True,
+            llmrig_benchmark_supported=True,
+            confidence=Confidence.HIGH,
+            evidence=tuple(evidence),
+            unknowns=unknowns + ("supported architectures are unknown",),
+        )
+
+
+def detected_runtime_version(executable: str) -> Optional[str]:
+    """Return a bounded, privacy-safe version line without exposing command errors."""
+    try:
+        process = run_cmd([executable, "--version"], timeout=5)
+    except Exception:
+        return None
+    if process.returncode != 0:
+        return None
+    text = (process.stdout or process.stderr).strip().splitlines()
+    if not text:
+        return None
+    return text[0][:200].replace(str(Path.home()), "~")
+
+
+class LlamaCppRuntimeProvider:
+    """Safe local capability detection for llama.cpp; never executes weights."""
+
+    name = "llama.cpp"
+
+    def info(self) -> Dict[str, Any]:
+        executable = next(
+            (candidate for candidate in ("llama-cli", "llama.cpp") if shutil.which(candidate)),
+            None,
+        )
+        return {
+            "installed": executable is not None,
+            "version": detected_runtime_version(executable) if executable else None,
+        }
+
+    def is_available(self, endpoint: Optional[str] = None) -> bool:
+        info = self.info()
+        return bool(info["installed"] and info["version"])
+
+    def ensure_available(self, endpoint: Optional[str] = None) -> bool:
+        return self.is_available()
+
+    def capability(self, profile: Dict[str, Any]) -> RuntimeCapability:
+        info = self.info()
+        installed = bool(info["installed"])
+        available = installed and info["version"] is not None
+        evidence = (
+            RecommendationEvidence(
+                "deterministic-runtime-knowledge",
+                "llama.cpp GGUF runtime contract",
+                "llama.cpp uses GGUF model artifacts",
+            ),
+            RecommendationEvidence(
+                "verified-local-runtime",
+                "llama.cpp executable detection",
+                (
+                    "a recognized llama.cpp command is installed locally"
+                    if installed
+                    else "no recognized llama.cpp command was detected locally"
+                ),
+            ),
+        )
+        if available:
+            evidence += (
+                RecommendationEvidence(
+                    "verified-local-runtime",
+                    "llama.cpp version command",
+                    "the detected llama.cpp command returned version information",
+                ),
+            )
+        unknowns = () if info["version"] else ("runtime version is unknown",)
+        return RuntimeCapability(
+            runtime=self.name,
+            installed=installed,
+            available=available,
+            version=info["version"],
+            supported_artifact_formats=("GGUF",),
+            supported_platforms=ALL_PLATFORMS,
+            supported_architectures=(),
+            runtime_execution_capable=True,
+            llmrig_installation_supported=False,
+            llmrig_execution_supported=False,
+            llmrig_benchmark_supported=False,
+            confidence=Confidence.HIGH,
+            evidence=evidence,
+            unknowns=unknowns + ("supported architectures are unknown",),
+        )
+
+
+class MlxRuntimeProvider:
+    """Detect an optional local MLX-LM installation without importing it."""
+
+    name = "mlx-lm"
+
+    def info(self) -> Dict[str, Any]:
+        try:
+            installed = importlib.util.find_spec("mlx_lm") is not None
+        except (ImportError, ModuleNotFoundError, ValueError):
+            installed = False
+        version = None
+        if installed:
+            try:
+                version = importlib.metadata.version("mlx-lm")
+            except importlib.metadata.PackageNotFoundError:
+                pass
+        command_installed = shutil.which("mlx_lm.generate") is not None
+        command_available = False
+        if installed and command_installed:
+            try:
+                command_available = (
+                    run_cmd(["mlx_lm.generate", "--help"], timeout=5).returncode == 0
+                )
+            except Exception:
+                pass
+        return {
+            "installed": installed,
+            "command_installed": command_installed,
+            "command_available": command_available,
+            "version": version,
+        }
+
+    def is_available(self, endpoint: Optional[str] = None) -> bool:
+        info = self.info()
+        return bool(
+            info["installed"]
+            and info["command_installed"]
+            and info["command_available"]
+            and platform.system() == "Darwin"
+            and platform.machine().lower() in {"arm64", "aarch64"}
+        )
+
+    def ensure_available(self, endpoint: Optional[str] = None) -> bool:
+        return self.is_available()
+
+    def capability(self, profile: Dict[str, Any]) -> RuntimeCapability:
+        info = self.info()
+        installed = bool(info["installed"])
+        system = str(profile.get("os") or platform.system())
+        architecture = str(profile.get("arch") or platform.machine()).lower()
+        platform_supported = system == "Darwin"
+        architecture_supported = architecture in {"arm64", "aarch64"}
+        command_installed = bool(info.get("command_installed"))
+        command_available = bool(info.get("command_available"))
+        available = (
+            installed
+            and command_installed
+            and command_available
+            and platform_supported
+            and architecture_supported
+        )
+        evidence = (
+            RecommendationEvidence(
+                "deterministic-runtime-knowledge",
+                "MLX-LM package contract",
+                "MLX-LM executes repositories packaged for the MLX ecosystem",
+            ),
+            RecommendationEvidence(
+                "verified-local-runtime",
+                "Python package and command detection",
+                (
+                    "the optional mlx-lm package and generation command are installed locally"
+                    if installed and command_installed
+                    else "a complete local MLX-LM package and command installation was not detected"
+                ),
+            ),
+        )
+        blockers = []
+        if installed and not platform_supported:
+            blockers.append("MLX-LM is supported on macOS")
+        if installed and not architecture_supported:
+            blockers.append("MLX-LM requires an Apple Silicon architecture")
+        if installed and not command_installed:
+            blockers.append("the MLX-LM generation command was not detected")
+        elif installed and not command_available:
+            blockers.append("the MLX-LM generation command did not pass its health probe")
+        return RuntimeCapability(
+            runtime=self.name,
+            installed=installed,
+            available=available,
+            version=info["version"],
+            supported_artifact_formats=("MLX",),
+            supported_platforms=("Darwin",),
+            supported_architectures=("arm64", "aarch64"),
+            runtime_execution_capable=True,
+            llmrig_installation_supported=False,
+            llmrig_execution_supported=False,
+            llmrig_benchmark_supported=False,
+            confidence=Confidence.HIGH,
+            evidence=evidence,
+            unknowns=tuple(blockers)
+            + (() if info["version"] else ("runtime version is unknown",)),
+        )
+
 
 OLLAMA_RUNTIME: RuntimeProvider = OllamaRuntimeProvider()
+LLAMA_CPP_RUNTIME: RuntimeProvider = LlamaCppRuntimeProvider()
+MLX_RUNTIME: RuntimeProvider = MlxRuntimeProvider()
+RUNTIME_PROVIDERS: Tuple[RuntimeProvider, ...] = (
+    OLLAMA_RUNTIME,
+    LLAMA_CPP_RUNTIME,
+    MLX_RUNTIME,
+)
+
+
+def runtime_capabilities(profile: Dict[str, Any]) -> Tuple[RuntimeCapability, ...]:
+    """Detect providers in stable display/serialization order."""
+    return tuple(provider.capability(profile) for provider in RUNTIME_PROVIDERS)
 
 
 def installed_ollama_models() -> List[Dict[str, str]]:
@@ -2415,6 +2738,211 @@ def recommended_context(profile: Dict[str, Any], model: ModelSpec) -> int:
     return min(32_768, max_context)
 
 
+def runtime_candidates_for_artifacts(
+    artifacts: Sequence[ModelArtifact],
+    capabilities: Sequence[RuntimeCapability],
+    profile: Dict[str, Any],
+) -> Tuple[RuntimeCandidate, ...]:
+    """Match recognized artifacts to runtime capabilities without executing them."""
+    candidates = []
+    system = str(profile.get("os") or "")
+    architecture = str(profile.get("arch") or "").lower()
+    budget = model_budget_gb(profile)
+    for artifact in artifacts:
+        for capability in capabilities:
+            if artifact.format not in capability.supported_artifact_formats:
+                continue
+            blockers = []
+            support_status = "available"
+            if system and capability.supported_platforms and system not in capability.supported_platforms:
+                support_status = "platform_incompatible"
+                blockers.append(f"runtime does not support platform {system}")
+            elif not system and capability.supported_platforms:
+                support_status = "platform_unknown"
+                blockers.append("machine platform is unknown")
+            elif (
+                architecture
+                and capability.supported_architectures
+                and architecture not in capability.supported_architectures
+            ):
+                support_status = "architecture_incompatible"
+                blockers.append(f"runtime does not support architecture {architecture}")
+            elif not architecture and capability.supported_architectures:
+                support_status = "architecture_unknown"
+                blockers.append("machine architecture is unknown")
+            elif not capability.runtime_execution_capable:
+                support_status = "execution_unsupported"
+                blockers.append("runtime execution capability is unsupported")
+            elif not capability.installed:
+                support_status = "runtime_not_installed"
+                blockers.append("runtime is not installed")
+            elif not capability.available:
+                support_status = "runtime_unavailable"
+                blockers.append("runtime is installed but is not currently available")
+            if artifact.size_bytes is None or budget <= 0:
+                fit_result = "unknown"
+            elif gib(artifact.size_bytes) <= budget:
+                fit_result = "fits"
+            else:
+                fit_result = "too_large"
+            unknowns = [
+                "successful model inference has not been verified",
+                "runtime memory overhead is unknown",
+            ]
+            unknowns.extend(capability.unknowns)
+            match_evidence = RecommendationEvidence(
+                "deterministic-runtime-match",
+                f"{capability.runtime} artifact capability",
+                f"{capability.runtime} declares support for {artifact.format} artifacts",
+            )
+            candidates.append(
+                RuntimeCandidate(
+                    runtime=capability.runtime,
+                    artifact_id=artifact.artifact_id,
+                    artifact_format=artifact.format,
+                    support_status=support_status,
+                    fit_result=fit_result,
+                    confidence=Confidence.HIGH,
+                    evidence=capability.evidence + (match_evidence,),
+                    blockers=tuple(blockers),
+                    unknowns=tuple(dict.fromkeys(unknowns)),
+                )
+            )
+    return tuple(sorted(candidates, key=lambda item: (item.artifact_id, item.runtime)))
+
+
+def assess_generic_runtime_compatibility(
+    resolution: ModelResolution,
+    profile: Dict[str, Any],
+) -> CompatibilityResult:
+    """Combine artifact, runtime, and conservative machine-fit evidence."""
+    assert resolution.model is not None
+    capabilities = runtime_capabilities(profile)
+    candidates = runtime_candidates_for_artifacts(
+        resolution.artifacts, capabilities, profile
+    )
+    artifacts_by_id = {artifact.artifact_id: artifact for artifact in resolution.artifacts}
+    budget = model_budget_gb(profile)
+    fitting = [
+        (candidate, artifacts_by_id[candidate.artifact_id])
+        for candidate in candidates
+        if candidate.support_status == "available" and candidate.fit_result == "fits"
+    ]
+    common = {
+        "model_id": resolution.model.model_id,
+        "model_name": resolution.model.name,
+        "artifacts": resolution.artifacts,
+        "resolution_status": resolution.status,
+        "resolution_confidence": resolution.confidence,
+        "resolved_model": resolution.model,
+        "runtime_candidates": candidates,
+        "runtime_capabilities": capabilities,
+    }
+    base_unknowns = (
+        "practical context is unknown without measured runtime memory behavior",
+        "generation performance is not predicted or measured",
+    )
+    if fitting:
+        candidate, artifact = min(
+            fitting,
+            key=lambda item: (int(item[1].size_bytes or 0), item[1].artifact_id, item[0].runtime),
+        )
+        size_gib = gib(int(artifact.size_bytes or 0))
+        memory_evidence = RecommendationEvidence(
+            "deterministic-estimate",
+            "verified artifact size and local hardware profile",
+            "artifact size is within the conservative local model-weight budget",
+        )
+        return CompatibilityResult(
+            artifact_id=artifact.artifact_id,
+            runtime=candidate.runtime,
+            status=CompatibilityStatus.GOOD,
+            confidence=Confidence.HIGH,
+            evidence=resolution.evidence + candidate.evidence + (memory_evidence,),
+            reason="an available runtime supports the artifact and its verified size fits the conservative memory budget",
+            can_run=True,
+            artifact_format=artifact.format,
+            estimated_model_memory_gb=round(size_gib, 1),
+            planning_budget_gb=round(budget, 1),
+            memory_headroom_gb=round(budget - size_gib, 1),
+            unknowns=base_unknowns + ("successful inference has not been verified",),
+            **common,
+        )
+    definitively_ruled_out = [
+        candidate
+        for candidate in candidates
+        if candidate.fit_result == "too_large"
+        or candidate.support_status
+        in {"platform_incompatible", "architecture_incompatible"}
+    ]
+    if candidates and len(definitively_ruled_out) == len(candidates):
+        candidate_artifacts = [
+            (candidate, artifacts_by_id[candidate.artifact_id])
+            for candidate in candidates
+        ]
+        candidate, artifact = min(
+            candidate_artifacts,
+            key=lambda item: (
+                item[0].fit_result != "too_large",
+                int(item[1].size_bytes or 0),
+                item[1].artifact_id,
+                item[0].runtime,
+            ),
+        )
+        size_gib = gib(artifact.size_bytes) if artifact.size_bytes is not None else None
+        if candidate.fit_result == "too_large":
+            exclusion_evidence = RecommendationEvidence(
+                "deterministic-estimate",
+                "verified artifact size and local hardware profile",
+                "artifact size exceeds the conservative local model-weight budget",
+            )
+            status = CompatibilityStatus.TOO_LARGE
+        else:
+            exclusion_evidence = RecommendationEvidence(
+                "deterministic-runtime-match",
+                f"{candidate.runtime} platform capability",
+                "the runtime candidate is incompatible with the detected platform or architecture",
+            )
+            status = CompatibilityStatus.NOT_NATIVE
+        return CompatibilityResult(
+            artifact_id=artifact.artifact_id,
+            runtime=candidate.runtime,
+            status=status,
+            confidence=Confidence.HIGH,
+            evidence=resolution.evidence + candidate.evidence + (exclusion_evidence,),
+            reason="every supported runtime path is definitively ruled out by machine fit or platform compatibility",
+            can_run=False,
+            artifact_format=artifact.format,
+            estimated_model_memory_gb=round(size_gib, 1) if size_gib is not None else None,
+            planning_budget_gb=round(budget, 1),
+            memory_headroom_gb=(
+                round(budget - size_gib, 1) if size_gib is not None else None
+            ),
+            unknowns=base_unknowns,
+            **common,
+        )
+
+    if not resolution.artifacts:
+        artifact_unknown = "no GGUF, MLX, or Safetensors artifacts were recognized"
+    elif not candidates:
+        artifact_unknown = "recognized artifacts have no supported execution runtime"
+    elif all(candidate.fit_result == "unknown" for candidate in candidates):
+        artifact_unknown = "artifact size or machine planning budget is unknown"
+    else:
+        artifact_unknown = "at least one plausible runtime path remains unresolved"
+    return CompatibilityResult(
+        artifact_id=None,
+        runtime=None,
+        status=CompatibilityStatus.UNKNOWN,
+        confidence=Confidence.UNKNOWN,
+        evidence=resolution.evidence,
+        reason="repository resolved, but practical execution compatibility is unknown",
+        can_run=None,
+        unknowns=(artifact_unknown,) + base_unknowns,
+        **common,
+    )
+
+
 def compatibility_for_identifier(
     identifier: str, profile: Dict[str, Any]
 ) -> CompatibilityResult:
@@ -2441,31 +2969,7 @@ def compatibility_for_identifier(
             )
         resolution = HF_SOURCE.resolve(identifier)
         if resolution.status == "resolved" and resolution.model is not None:
-            artifact_unknown = (
-                "no GGUF, MLX, or Safetensors artifacts were recognized"
-                if not resolution.artifacts
-                else "recognized artifacts have no verified execution runtime"
-            )
-            return CompatibilityResult(
-                model_id=resolution.model.model_id,
-                artifact_id=None,
-                runtime=None,
-                status=CompatibilityStatus.UNKNOWN,
-                confidence=Confidence.UNKNOWN,
-                evidence=resolution.evidence,
-                reason="repository resolved, but practical execution compatibility is unknown",
-                model_name=resolution.model.name,
-                unknowns=(
-                    artifact_unknown,
-                    "practical memory use is unknown",
-                    "practical context is unknown without a supported runtime",
-                    "generation performance is not predicted or measured",
-                ),
-                artifacts=resolution.artifacts,
-                resolution_status=resolution.status,
-                resolution_confidence=resolution.confidence,
-                resolved_model=resolution.model,
-            )
+            return assess_generic_runtime_compatibility(resolution, profile)
         reason = (
             "Hugging Face repository was not found or is inaccessible"
             if resolution.status == "not_found_or_inaccessible"
@@ -3059,7 +3563,10 @@ def command_can(args: argparse.Namespace) -> int:
         print(f"Runtime:     {runtime}")
         print(f"Build:       {result.artifact_id}")
         print(f"Format:      {result.artifact_format}")
-        print(f"Context:     {result.recommended_context:,} tokens")
+        if result.recommended_context is not None:
+            print(f"Context:     {result.recommended_context:,} tokens")
+        else:
+            print("Context:     unknown")
 
     if result.artifacts:
         print("\nDetected artifacts")
@@ -3077,6 +3584,19 @@ def command_can(args: argparse.Namespace) -> int:
             for item in artifact.evidence:
                 print(f"  Evidence: {item.detail} ({item.kind}; {item.source})")
             for unknown in artifact.unknowns:
+                print(f"  Unknown: {unknown}")
+
+    if result.runtime_candidates:
+        print("\nRuntime candidates")
+        for candidate in result.runtime_candidates:
+            print(f"- Runtime: {candidate.runtime}")
+            print(f"  Build: {candidate.artifact_id}")
+            print(f"  Support: {candidate.support_status}")
+            print(f"  Fit: {candidate.fit_result}")
+            print(f"  Runtime confidence: {candidate.confidence.value.upper()}")
+            for blocker in candidate.blockers:
+                print(f"  Blocker: {blocker}")
+            for unknown in candidate.unknowns:
                 print(f"  Unknown: {unknown}")
 
     if result.estimated_model_memory_gb is not None:
