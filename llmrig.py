@@ -16,11 +16,12 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+import urllib.error
 import webbrowser
 from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Protocol, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Protocol, Sequence, Tuple, TypeVar
 
 PROJECT_NAME = "LLMRig"
 PROJECT_SLUG = "llmrig"
@@ -96,6 +97,14 @@ class Model:
         if not self.modalities or any(not item.strip() for item in self.modalities):
             raise ValueError("model modalities must not be empty")
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "model_id": self.model_id,
+            "name": self.name,
+            "params_b": self.params_b,
+            "modalities": list(self.modalities),
+        }
+
 
 @dataclass(frozen=True)
 class ModelArtifact:
@@ -103,30 +112,51 @@ class ModelArtifact:
 
     artifact_id: str
     model_id: str
-    runtime: str
+    runtime: Optional[str]
     format: str
     size_gb: Optional[float]
     context_max: Optional[int]
     platforms: Tuple[str, ...]
     aliases: Tuple[str, ...] = ()
+    quantization: Optional[str] = None
+    size_bytes: Optional[int] = None
+    evidence: Tuple[RecommendationEvidence, ...] = ()
+    unknowns: Tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.artifact_id.strip() or not self.model_id.strip():
             raise ValueError("artifact id and model id must not be empty")
-        if not self.runtime.strip() or not self.format.strip():
-            raise ValueError("artifact runtime and format must not be empty")
+        if not self.format.strip():
+            raise ValueError("artifact format must not be empty")
+        if self.runtime is not None and not self.runtime.strip():
+            raise ValueError("artifact runtime must not be empty when known")
         if self.size_gb is not None and self.size_gb <= 0:
             raise ValueError("artifact size must be positive when known")
         if self.context_max is not None and self.context_max <= 0:
             raise ValueError("artifact context must be positive when known")
-        if not self.platforms:
-            raise ValueError("artifact must support at least one platform")
+        if self.size_bytes is not None and self.size_bytes <= 0:
+            raise ValueError("artifact byte size must be positive when known")
         if self.artifact_id in self.aliases or len(set(self.aliases)) != len(self.aliases):
             raise ValueError("artifact aliases must be unique and exclude the primary id")
 
     @property
     def ids(self) -> Tuple[str, ...]:
         return (self.artifact_id,) + self.aliases
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "artifact_id": self.artifact_id,
+            "model_id": self.model_id,
+            "format": self.format,
+            "quantization": self.quantization,
+            "size_bytes": self.size_bytes,
+            "size_gb": self.size_gb,
+            "runtime": self.runtime,
+            "context_max": self.context_max,
+            "platforms": list(self.platforms),
+            "evidence": [item.to_dict() for item in self.evidence],
+            "unknowns": list(self.unknowns),
+        }
 
 
 class CompatibilityStatus(str, Enum):
@@ -158,6 +188,10 @@ class CompatibilityResult:
     recommended_context: Optional[int] = None
     unknowns: Tuple[str, ...] = ()
     alternatives: Tuple[str, ...] = ()
+    artifacts: Tuple[ModelArtifact, ...] = ()
+    resolution_status: Optional[str] = None
+    resolution_confidence: Optional[Confidence] = None
+    resolved_model: Optional[Model] = None
 
     def __post_init__(self) -> None:
         if not self.model_id.strip():
@@ -182,7 +216,7 @@ class CompatibilityResult:
             raise ValueError("context can only be recommended for a practical fit")
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        payload = {
             "model_id": self.model_id,
             "artifact_id": self.artifact_id,
             "runtime": self.runtime,
@@ -200,6 +234,16 @@ class CompatibilityResult:
             "unknowns": list(self.unknowns),
             "alternatives": list(self.alternatives),
         }
+        if self.resolution_status is not None:
+            payload["compatibility_status"] = self.status.value
+            payload["compatibility_confidence"] = self.confidence.value
+            payload["resolution_status"] = self.resolution_status
+            payload["resolution_confidence"] = (
+                self.resolution_confidence.value if self.resolution_confidence else None
+            )
+            payload["model"] = self.resolved_model.to_dict() if self.resolved_model else None
+            payload["artifacts"] = [artifact.to_dict() for artifact in self.artifacts]
+        return payload
 
 
 class RuntimeProvider(Protocol):
@@ -214,14 +258,15 @@ class RuntimeProvider(Protocol):
     def ensure_available(self, endpoint: Optional[str] = None) -> bool: ...
 
 
-class ModelSource(Protocol):
+ResolvedType = TypeVar("ResolvedType", covariant=True)
+
+
+class ModelSource(Protocol[ResolvedType]):
     """Minimum source boundary used by the curated catalog."""
 
     name: str
 
-    def list_specs(self) -> Sequence["ModelSpec"]: ...
-
-    def resolve(self, identifier: str) -> Optional["ModelSpec"]: ...
+    def resolve(self, identifier: str) -> Optional[ResolvedType]: ...
 
 
 @dataclass(frozen=True)
@@ -257,15 +302,29 @@ class ModelSpec:
 
     @property
     def artifact(self) -> ModelArtifact:
+        label = self.quant.strip()
+        if "MLX" in label.upper():
+            artifact_format = "MLX"
+            quantization = re.sub(r"\bMLX\b", "", label, flags=re.I).strip()
+            quantization = quantization or None
+        else:
+            artifact_format = "Unknown"
+            quantization = label
         return ModelArtifact(
             artifact_id=self.ollama,
             model_id=self.model.model_id,
             runtime="ollama",
-            format=self.quant,
+            format=artifact_format,
             size_gb=self.size_gb,
             context_max=self.context_max,
             platforms=self.platforms,
             aliases=self.aliases,
+            quantization=quantization,
+            unknowns=(
+                ("artifact file format is unknown",)
+                if artifact_format == "Unknown"
+                else ()
+            ),
         )
 
     @property
@@ -1568,6 +1627,334 @@ def pull_model(model: str) -> int:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class ModelResolution:
+    """A logical model and the artifacts evidenced by one upstream source."""
+
+    status: str
+    model: Optional[Model]
+    artifacts: Tuple[ModelArtifact, ...] = ()
+    confidence: Confidence = Confidence.UNKNOWN
+    evidence: Tuple[RecommendationEvidence, ...] = ()
+    message: Optional[str] = None
+
+
+GGUF_QUANT_PATTERN = re.compile(
+    r"(?:^|[-_.])((?:IQ(?:1_[SM]|2_(?:XXS|XS|S|M)|3_(?:XXS|XS|S|M)|4_(?:NL|XS)))|"
+    r"(?:Q(?:2_K(?:_[SL])?|3_K(?:_[SML]|_XL)?|4_(?:0(?:_[48]_[48])?|1|K(?:_[SML]|_XL)?)|"
+    r"5_(?:0|1|K(?:_[SML]|_XL)?)|6_K(?:_[SL])?|8_0)))(?=$|[-_.])",
+    re.I,
+)
+
+
+def infer_gguf_quantization(filename: str) -> Tuple[Optional[str], str]:
+    """Infer only conventional GGUF quant tokens, never arbitrary name fragments."""
+    stem = filename.rsplit("/", 1)[-1]
+    if stem.lower().endswith(".gguf"):
+        stem = stem[:-5]
+    matches = {match.upper() for match in GGUF_QUANT_PATTERN.findall(stem)}
+    if len(matches) == 1:
+        return next(iter(matches)), "inferred"
+    if len(matches) > 1:
+        return None, "ambiguous"
+    return None, "unknown"
+
+
+def hf_sibling_size(item: Dict[str, Any]) -> Optional[int]:
+    raw_size = item.get("size")
+    if raw_size is None and isinstance(item.get("lfs"), dict):
+        raw_size = item["lfs"].get("size")
+    try:
+        size = int(raw_size)
+    except (TypeError, ValueError):
+        return None
+    return size if size > 0 else None
+
+
+SAFETENSORS_SHARD_PATTERN = re.compile(
+    r"^(.*)-(\d{5})-of-(\d{5})\.safetensors$", re.I
+)
+
+
+def hf_weight_set_size(files: Sequence[Dict[str, Any]]) -> Tuple[Optional[int], str]:
+    """Sum only a single file or one complete, unambiguous Safetensors shard set."""
+    if not files:
+        return None, "missing"
+    if len(files) == 1:
+        size = hf_sibling_size(files[0])
+        return (size, "verified") if size is not None else (None, "missing")
+
+    matches = [
+        SAFETENSORS_SHARD_PATTERN.match(str(item.get("rfilename") or ""))
+        for item in files
+    ]
+    if not all(matches):
+        return None, "ambiguous"
+    shard_keys = {(match.group(1), int(match.group(3))) for match in matches if match}
+    if len(shard_keys) != 1:
+        return None, "ambiguous"
+    _, total = next(iter(shard_keys))
+    indices = {int(match.group(2)) for match in matches if match}
+    if len(files) != total or indices != set(range(1, total + 1)):
+        return None, "ambiguous"
+    sizes = [hf_sibling_size(item) for item in files]
+    if any(size is None for size in sizes):
+        return None, "missing"
+    return sum(size for size in sizes if size is not None), "verified"
+
+
+def hf_context_max(payload: Dict[str, Any]) -> Optional[int]:
+    config = payload.get("config") if isinstance(payload.get("config"), dict) else {}
+    for key in ("max_position_embeddings", "n_positions", "max_sequence_length", "seq_length"):
+        try:
+            value = int(config.get(key))
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return None
+
+
+def hf_explicit_quantization(payload: Dict[str, Any]) -> Optional[str]:
+    config = payload.get("config") if isinstance(payload.get("config"), dict) else {}
+    quant_config = config.get("quantization_config")
+    if isinstance(quant_config, dict) and isinstance(quant_config.get("quant_method"), str):
+        return str(quant_config["quant_method"])
+    mlx_quant = config.get("quantization")
+    if isinstance(mlx_quant, dict):
+        try:
+            bits = int(mlx_quant.get("bits"))
+        except (TypeError, ValueError):
+            return None
+        if bits > 0:
+            return f"{bits}-bit"
+    return None
+
+
+def hf_base_model_id(payload: Dict[str, Any]) -> Optional[str]:
+    candidates = []
+    card_data = payload.get("cardData")
+    if isinstance(card_data, dict):
+        base_model = card_data.get("base_model")
+        if isinstance(base_model, str):
+            candidates.append(base_model)
+        elif isinstance(base_model, list):
+            candidates.extend(item for item in base_model if isinstance(item, str))
+    for tag in payload.get("tags") or []:
+        if isinstance(tag, str) and tag.startswith("base_model:"):
+            candidates.append(tag.split(":", 1)[1])
+    unique = tuple(dict.fromkeys(item.strip() for item in candidates if item.strip()))
+    return unique[0] if len(unique) == 1 else None
+
+
+def hf_model_from_metadata(identifier: str, payload: Dict[str, Any]) -> Model:
+    repository_id = str(payload.get("id") or payload.get("modelId") or identifier)
+    model_id = hf_base_model_id(payload) or repository_id
+
+    task = str(payload.get("pipeline_tag") or "").lower()
+    if task == "image-text-to-text":
+        modalities = ("text", "image")
+    elif task in LIVE_LLM_TASKS:
+        modalities = ("text",)
+    else:
+        modalities = ("unknown",)
+    return Model(model_id, model_id.rsplit("/", 1)[-1], None, modalities)
+
+
+def hf_artifacts_from_metadata(
+    model: Model, payload: Dict[str, Any]
+) -> Tuple[ModelArtifact, ...]:
+    repository_id = str(payload.get("id") or payload.get("modelId") or model.model_id)
+    siblings = [item for item in (payload.get("siblings") or []) if isinstance(item, dict)]
+    siblings.sort(key=lambda item: str(item.get("rfilename") or ""))
+    context_max = hf_context_max(payload)
+    explicit_quant = hf_explicit_quantization(payload)
+    artifacts: List[ModelArtifact] = []
+
+    for item in siblings:
+        filename = str(item.get("rfilename") or "")
+        if not filename.lower().endswith(".gguf"):
+            continue
+        size_bytes = hf_sibling_size(item)
+        quantization, quant_status = infer_gguf_quantization(filename)
+        evidence = [
+            RecommendationEvidence(
+                "deterministic-inference",
+                "GGUF .gguf extension rule",
+                f"{filename} is recognized as a GGUF artifact from its file extension",
+            )
+        ]
+        unknowns = ["runtime compatibility is unknown"]
+        if size_bytes is not None:
+            evidence.append(
+                RecommendationEvidence(
+                    "verified-metadata",
+                    "Hugging Face repository file metadata",
+                    f"artifact byte size is reported for {filename}",
+                )
+            )
+        else:
+            unknowns.append("artifact size is unknown")
+        if quant_status == "inferred":
+            evidence.append(
+                RecommendationEvidence(
+                    "deterministic-inference",
+                    "conventional GGUF quantization filename rule",
+                    f"quantization {quantization} is inferred from {filename}",
+                )
+            )
+        elif quant_status == "ambiguous":
+            unknowns.append("quantization is ambiguous")
+        else:
+            unknowns.append("quantization is unknown")
+        if context_max is None:
+            unknowns.append("context limit is unknown")
+        else:
+            evidence.append(
+                RecommendationEvidence(
+                    "verified-metadata",
+                    "Hugging Face model config metadata",
+                    "context limit is reported by repository metadata",
+                )
+            )
+        artifacts.append(
+            ModelArtifact(
+                artifact_id=f"hf://{repository_id}/{filename}",
+                model_id=model.model_id,
+                runtime=None,
+                format="GGUF",
+                size_gb=size_bytes / 1_000_000_000 if size_bytes else None,
+                context_max=context_max,
+                platforms=(),
+                quantization=quantization,
+                size_bytes=size_bytes,
+                evidence=tuple(evidence),
+                unknowns=tuple(unknowns),
+            )
+        )
+
+    weight_files = [
+        item
+        for item in siblings
+        if str(item.get("rfilename") or "").lower().endswith(".safetensors")
+    ]
+    tags = {str(tag).lower() for tag in (payload.get("tags") or [])}
+    is_mlx = str(payload.get("library_name") or "").lower() == "mlx" or "mlx" in tags
+    if weight_files or is_mlx:
+        size_bytes, size_status = hf_weight_set_size(weight_files)
+        artifact_format = "MLX" if is_mlx else "Safetensors"
+        format_source = (
+            "Hugging Face library/tag metadata"
+            if is_mlx
+            else "Safetensors .safetensors extension rule"
+        )
+        format_kind = "verified-metadata" if is_mlx else "deterministic-inference"
+        evidence = [
+            RecommendationEvidence(
+                format_kind,
+                format_source,
+                f"repository weights are recognized as {artifact_format}",
+            )
+        ]
+        unknowns = ["runtime compatibility is unknown"]
+        if size_bytes is not None:
+            evidence.append(
+                RecommendationEvidence(
+                    "verified-metadata",
+                    "Hugging Face repository file metadata",
+                    "artifact size is the sum of all listed weight-file sizes",
+                )
+            )
+        elif size_status == "ambiguous":
+            unknowns.append("artifact size is unknown because weight-file grouping is ambiguous")
+        else:
+            unknowns.append("artifact size is unknown")
+        if explicit_quant is not None:
+            evidence.append(
+                RecommendationEvidence(
+                    "verified-metadata",
+                    "Hugging Face model config metadata",
+                    f"quantization {explicit_quant} is explicitly reported",
+                )
+            )
+        else:
+            unknowns.append("quantization is unknown")
+        if context_max is None:
+            unknowns.append("context limit is unknown")
+        else:
+            evidence.append(
+                RecommendationEvidence(
+                    "verified-metadata",
+                    "Hugging Face model config metadata",
+                    "context limit is reported by repository metadata",
+                )
+            )
+        artifacts.append(
+            ModelArtifact(
+                artifact_id=f"hf://{repository_id}/{artifact_format.lower()}",
+                model_id=model.model_id,
+                runtime=None,
+                format=artifact_format,
+                size_gb=size_bytes / 1_000_000_000 if size_bytes else None,
+                context_max=context_max,
+                platforms=(),
+                quantization=explicit_quant,
+                size_bytes=size_bytes,
+                evidence=tuple(evidence),
+                unknowns=tuple(unknowns),
+            )
+        )
+    return tuple(artifacts)
+
+
+class HuggingFaceModelSource:
+    """Generic, read-only Hugging Face metadata resolver with no weight downloads."""
+
+    name = "hugging-face"
+
+    def resolve(self, identifier: str) -> ModelResolution:
+        encoded = urllib.parse.quote(identifier.strip(), safe="/")
+        url = f"{HF_MODELS_API}/{encoded}?blobs=true"
+        try:
+            payload, _ = http_json(url, timeout=20)
+        except urllib.error.HTTPError as exc:
+            if exc.code in {401, 403, 404}:
+                return ModelResolution(
+                    "not_found_or_inaccessible",
+                    None,
+                    message="repository was not found or is inaccessible",
+                )
+            return ModelResolution("network_error", None, message="Hugging Face request failed")
+        except Exception:
+            return ModelResolution("network_error", None, message="Hugging Face is unavailable")
+        if not isinstance(payload, dict):
+            return ModelResolution("network_error", None, message="unexpected Hugging Face response")
+
+        model = hf_model_from_metadata(identifier, payload)
+        artifacts = hf_artifacts_from_metadata(model, payload)
+        evidence = (
+            RecommendationEvidence(
+                "verified-metadata",
+                "Hugging Face model API",
+                "repository identity and metadata were returned by Hugging Face",
+            ),
+        )
+        base_model = hf_base_model_id(payload)
+        if base_model:
+            evidence += (
+                RecommendationEvidence(
+                    "verified-metadata",
+                    "Hugging Face base_model metadata",
+                    f"repository explicitly links its artifacts to logical model {base_model}",
+                ),
+            )
+        confidence = Confidence.HIGH if artifacts else Confidence.MEDIUM
+        return ModelResolution("resolved", model, artifacts, confidence, evidence)
+
+
+HF_SOURCE: ModelSource[ModelResolution] = HuggingFaceModelSource()
+
+
 def cache_dir() -> Path:
     if platform.system() == "Windows" and os.environ.get("LOCALAPPDATA"):
         base = Path(os.environ["LOCALAPPDATA"])
@@ -1806,7 +2193,7 @@ def assess_curated_compatibility(
             "; ".join(missing),
             model.name,
             None,
-            artifact.format,
+            model.quant,
             artifact.size_gb,
             round(budget, 1) if budget else None,
             None,
@@ -1864,7 +2251,7 @@ def assess_curated_compatibility(
         reason,
         model.name,
         can_run,
-        artifact.format,
+        model.quant,
         round(artifact.size_gb, 1),
         round(budget, 1),
         headroom,
@@ -2031,24 +2418,75 @@ def recommended_context(profile: Dict[str, Any], model: ModelSpec) -> int:
 def compatibility_for_identifier(
     identifier: str, profile: Dict[str, Any]
 ) -> CompatibilityResult:
-    """Resolve and assess one curated identifier without speculative discovery."""
+    """Resolve curated IDs first, then generic Hugging Face repository metadata."""
     model = CURATED_SOURCE.resolve(identifier)
     if model is None:
+        parts = identifier.strip().split("/")
+        if len(parts) != 2 or not all(parts):
+            return CompatibilityResult(
+                model_id=identifier,
+                artifact_id=None,
+                runtime=None,
+                status=CompatibilityStatus.UNKNOWN,
+                confidence=Confidence.UNKNOWN,
+                reason="identifier is not a curated model or Hugging Face repository ID",
+                unknowns=(
+                    "logical model metadata is unknown",
+                    "runnable artifact is unknown",
+                    "runtime compatibility is unknown",
+                    "memory requirement is unknown",
+                    "practical context is unknown",
+                    "generation performance is not predicted or measured",
+                ),
+            )
+        resolution = HF_SOURCE.resolve(identifier)
+        if resolution.status == "resolved" and resolution.model is not None:
+            artifact_unknown = (
+                "no GGUF, MLX, or Safetensors artifacts were recognized"
+                if not resolution.artifacts
+                else "recognized artifacts have no verified execution runtime"
+            )
+            return CompatibilityResult(
+                model_id=resolution.model.model_id,
+                artifact_id=None,
+                runtime=None,
+                status=CompatibilityStatus.UNKNOWN,
+                confidence=Confidence.UNKNOWN,
+                evidence=resolution.evidence,
+                reason="repository resolved, but practical execution compatibility is unknown",
+                model_name=resolution.model.name,
+                unknowns=(
+                    artifact_unknown,
+                    "practical memory use is unknown",
+                    "practical context is unknown without a supported runtime",
+                    "generation performance is not predicted or measured",
+                ),
+                artifacts=resolution.artifacts,
+                resolution_status=resolution.status,
+                resolution_confidence=resolution.confidence,
+                resolved_model=resolution.model,
+            )
+        reason = (
+            "Hugging Face repository was not found or is inaccessible"
+            if resolution.status == "not_found_or_inaccessible"
+            else "Hugging Face metadata request failed"
+        )
         return CompatibilityResult(
             model_id=identifier,
             artifact_id=None,
             runtime=None,
             status=CompatibilityStatus.UNKNOWN,
             confidence=Confidence.UNKNOWN,
-            reason="model is not present in the curated catalog",
+            reason=reason,
             unknowns=(
                 "logical model metadata is unknown",
-                "runnable artifact is unknown",
+                "artifact metadata is unknown",
                 "runtime compatibility is unknown",
                 "memory requirement is unknown",
                 "practical context is unknown",
-                "generation performance is not predicted or measured",
             ),
+            resolution_status=resolution.status,
+            resolution_confidence=resolution.confidence,
         )
     result = assess_curated_compatibility(model, profile)
     alternatives = []
@@ -2593,8 +3031,27 @@ def command_can(args: argparse.Namespace) -> int:
     if result.model_name and result.model_name != result.model_id:
         print(f"Logical ID:  {result.model_id}")
     print(f"Fit:         {fit}")
-    print(f"Class:       {result.status.value}")
-    print(f"Confidence:  {result.confidence.value.upper()}")
+    if result.resolution_status is not None:
+        print(f"Compatibility:            {result.status.value}")
+        print(f"Compatibility confidence: {result.confidence.value.upper()}")
+        resolution_confidence = (
+            result.resolution_confidence.value.upper()
+            if result.resolution_confidence
+            else "UNKNOWN"
+        )
+        print(f"Resolution status:         {result.resolution_status}")
+        print(f"Resolution confidence:     {resolution_confidence}")
+        if result.resolved_model:
+            params = (
+                f"{result.resolved_model.params_b:.3f}B"
+                if result.resolved_model.params_b is not None
+                else "unknown"
+            )
+            print(f"Parameters:  {params}")
+            print(f"Modalities:  {', '.join(result.resolved_model.modalities)}")
+    else:
+        print(f"Class:       {result.status.value}")
+        print(f"Confidence:  {result.confidence.value.upper()}")
 
     if result.can_run is True:
         print("\nPractical configuration")
@@ -2603,6 +3060,24 @@ def command_can(args: argparse.Namespace) -> int:
         print(f"Build:       {result.artifact_id}")
         print(f"Format:      {result.artifact_format}")
         print(f"Context:     {result.recommended_context:,} tokens")
+
+    if result.artifacts:
+        print("\nDetected artifacts")
+        for artifact in result.artifacts:
+            print(f"- Build: {artifact.artifact_id}")
+            print(f"  Format: {artifact.format}")
+            print(f"  Size: {artifact.size_bytes} bytes" if artifact.size_bytes else "  Size: unknown")
+            print(f"  Quantization: {artifact.quantization or 'unknown'}")
+            print(f"  Runtime: {artifact.runtime or 'unknown'}")
+            print(
+                f"  Context: {artifact.context_max:,} tokens"
+                if artifact.context_max
+                else "  Context: unknown"
+            )
+            for item in artifact.evidence:
+                print(f"  Evidence: {item.detail} ({item.kind}; {item.source})")
+            for unknown in artifact.unknowns:
+                print(f"  Unknown: {unknown}")
 
     if result.estimated_model_memory_gb is not None:
         print("\nMemory planning")
@@ -2922,9 +3397,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     can = subparsers.add_parser(
-        "can", help="Check practical compatibility for a curated model."
+        "can", help="Check a curated model or inspect Hugging Face artifact metadata."
     )
-    can.add_argument("model", help="Exact curated Ollama model ID or known alias.")
+    can.add_argument("model", help="Curated ID/alias or owner/repository Hugging Face ID.")
     can.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
 
     setup = subparsers.add_parser(
