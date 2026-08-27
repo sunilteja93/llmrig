@@ -37,6 +37,7 @@ Then use LLMRig from anywhere:
 
 ```bash
 llmrig doctor
+llmrig can qwen3.8:27b-mlx
 llmrig recommend
 llmrig models --fit
 ```
@@ -114,6 +115,26 @@ Machine-readable output:
 ```bash
 llmrig doctor --json
 ```
+
+### Check whether a curated model can run
+
+```bash
+llmrig can qwen3.8:27b-mlx
+```
+
+Machine-readable compatibility, confidence, configuration, and evidence:
+
+```bash
+llmrig can qwen3.8:27b-mlx --json
+```
+
+Compatibility analysis is limited to the curated catalog. Memory results are
+conservative planning estimates, and unmeasured runtime overhead and performance
+remain explicitly unknown.
+
+`llmrig can` also behaves as a three-state Unix predicate in both human and JSON
+modes: exit `0` means the model can run, exit `1` means it cannot run, and exit
+`2` means compatibility is unknown or the identifier cannot be analyzed.
 
 ### List models
 

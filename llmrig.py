@@ -17,7 +17,7 @@ import time
 import urllib.parse
 import urllib.request
 import webbrowser
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Protocol, Sequence, Tuple
@@ -149,6 +149,15 @@ class CompatibilityResult:
     confidence: Confidence
     evidence: Tuple[RecommendationEvidence, ...] = ()
     reason: Optional[str] = None
+    model_name: Optional[str] = None
+    can_run: Optional[bool] = None
+    artifact_format: Optional[str] = None
+    estimated_model_memory_gb: Optional[float] = None
+    planning_budget_gb: Optional[float] = None
+    memory_headroom_gb: Optional[float] = None
+    recommended_context: Optional[int] = None
+    unknowns: Tuple[str, ...] = ()
+    alternatives: Tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.model_id.strip():
@@ -159,6 +168,18 @@ class CompatibilityResult:
             raise ValueError("unknown status and confidence must be represented together")
         if not status_unknown and not self.evidence:
             raise ValueError("known compatibility status requires evidence")
+        expected_can_run = {
+            CompatibilityStatus.EXCELLENT: True,
+            CompatibilityStatus.GOOD: True,
+            CompatibilityStatus.POSSIBLE: None,
+            CompatibilityStatus.NOT_NATIVE: False,
+            CompatibilityStatus.TOO_LARGE: False,
+            CompatibilityStatus.UNKNOWN: None,
+        }[self.status]
+        if self.can_run is not expected_can_run:
+            raise ValueError("can_run must agree with compatibility status")
+        if self.recommended_context is not None and self.can_run is not True:
+            raise ValueError("context can only be recommended for a practical fit")
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -169,6 +190,15 @@ class CompatibilityResult:
             "confidence": self.confidence.value,
             "evidence": [item.to_dict() for item in self.evidence],
             "reason": self.reason,
+            "model_name": self.model_name,
+            "can_run": self.can_run,
+            "artifact_format": self.artifact_format,
+            "estimated_model_memory_gb": self.estimated_model_memory_gb,
+            "planning_budget_gb": self.planning_budget_gb,
+            "memory_headroom_gb": self.memory_headroom_gb,
+            "recommended_context": self.recommended_context,
+            "unknowns": list(self.unknowns),
+            "alternatives": list(self.alternatives),
         }
 
 
@@ -1739,45 +1769,107 @@ def assess_curated_compatibility(
     budget = model_budget_gb(profile)
     ram = safe_float(profile.get("ram_gib"))
     artifact = model.artifact
-    evidence = (
-        RecommendationEvidence(
-            "curated-metadata",
-            f"curated snapshot {CURATED_SNAPSHOT_DATE}",
-            "artifact size, runtime, platform, and context are curated",
-        ),
-        RecommendationEvidence(
-            "deterministic-estimate",
-            "local hardware profile",
-            "model-weight budget is calculated with conservative headroom",
-        ),
+    curated_evidence = RecommendationEvidence(
+        "curated-metadata",
+        f"curated snapshot {CURATED_SNAPSHOT_DATE}",
+        "artifact identity and available metadata come from the curated catalog",
     )
-    if not profile.get("os") or not ram:
+    estimate_evidence = RecommendationEvidence(
+        "deterministic-estimate",
+        "local hardware profile",
+        "model-weight budget is calculated with conservative headroom",
+    )
+    runtime_evidence = RecommendationEvidence(
+        "runtime-support",
+        "LLMRig Ollama runtime provider",
+        "LLMRig implements curated artifact execution through Ollama",
+    )
+    base_unknowns = (
+        "runtime memory overhead is not measured",
+        "generation performance is not predicted or measured",
+    )
+    if not profile.get("os") or not ram or artifact.size_gb is None:
+        missing = []
+        if not profile.get("os"):
+            missing.append("hardware platform is unknown")
+        if not ram:
+            missing.append("total system memory is unknown")
+        if artifact.size_gb is None:
+            missing.append("artifact memory estimate is unknown")
         return CompatibilityResult(
             model.model.model_id,
             artifact.artifact_id,
             artifact.runtime,
             CompatibilityStatus.UNKNOWN,
             Confidence.UNKNOWN,
-            evidence[:1],
-            "hardware platform or memory is unknown",
+            (curated_evidence,),
+            "; ".join(missing),
+            model.name,
+            None,
+            artifact.format,
+            artifact.size_gb,
+            round(budget, 1) if budget else None,
+            None,
+            None,
+            tuple(missing) + base_unknowns,
         )
+
+    evidence = (
+        curated_evidence,
+        estimate_evidence,
+        runtime_evidence,
+    )
+    headroom = round(budget - artifact.size_gb, 1)
+    context: Optional[int] = None
+    confidence = Confidence.HIGH
+    reason: Optional[str] = None
+    can_run: Optional[bool]
     if profile.get("os") not in artifact.platforms:
         status = CompatibilityStatus.NOT_NATIVE
-    elif model.size_gb <= budget * 0.75:
+        can_run = False
+        reason = "the curated artifact does not support this operating system"
+    elif artifact.size_gb <= budget * 0.75:
         status = CompatibilityStatus.EXCELLENT
-    elif model.size_gb <= budget:
+        can_run = True
+    elif artifact.size_gb <= budget:
         status = CompatibilityStatus.GOOD
-    elif model.size_gb <= ram * 0.80:
+        can_run = True
+    elif artifact.size_gb <= ram * 0.80:
         status = CompatibilityStatus.POSSIBLE
+        can_run = None
+        confidence = Confidence.MEDIUM
+        reason = "the artifact may require memory spill beyond the conservative budget"
     else:
         status = CompatibilityStatus.TOO_LARGE
+        can_run = False
+        reason = "the artifact leaves insufficient memory for the OS, runtime, and context"
+
+    if can_run:
+        context = recommended_context(profile, model)
+        evidence += (
+            RecommendationEvidence(
+                "context-heuristic",
+                "curated context limit and local hardware profile",
+                "practical starting context is selected by a deterministic heuristic",
+            ),
+        )
+
     return CompatibilityResult(
         model.model.model_id,
         artifact.artifact_id,
         artifact.runtime,
         status,
-        Confidence.HIGH,
+        confidence,
         evidence,
+        reason,
+        model.name,
+        can_run,
+        artifact.format,
+        round(artifact.size_gb, 1),
+        round(budget, 1),
+        headroom,
+        context,
+        base_unknowns,
     )
 
 
@@ -1934,6 +2026,50 @@ def recommended_context(profile: Dict[str, Any], model: ModelSpec) -> int:
     if ram >= 48 and model.size_gb <= ram * 0.25:
         return min(65_536, max_context)
     return min(32_768, max_context)
+
+
+def compatibility_for_identifier(
+    identifier: str, profile: Dict[str, Any]
+) -> CompatibilityResult:
+    """Resolve and assess one curated identifier without speculative discovery."""
+    model = CURATED_SOURCE.resolve(identifier)
+    if model is None:
+        return CompatibilityResult(
+            model_id=identifier,
+            artifact_id=None,
+            runtime=None,
+            status=CompatibilityStatus.UNKNOWN,
+            confidence=Confidence.UNKNOWN,
+            reason="model is not present in the curated catalog",
+            unknowns=(
+                "logical model metadata is unknown",
+                "runnable artifact is unknown",
+                "runtime compatibility is unknown",
+                "memory requirement is unknown",
+                "practical context is unknown",
+                "generation performance is not predicted or measured",
+            ),
+        )
+    result = assess_curated_compatibility(model, profile)
+    alternatives = []
+    for candidate in CURATED_SOURCE.list_specs():
+        if candidate.ollama == model.ollama or not candidate.recommendable:
+            continue
+        if candidate.model.model_id != model.model.model_id:
+            continue
+        candidate_result = assess_curated_compatibility(candidate, profile)
+        if candidate_result.can_run is True:
+            alternatives.append(candidate.artifact.artifact_id)
+    return replace(result, alternatives=tuple(alternatives))
+
+
+def compatibility_exit_code(result: CompatibilityResult) -> int:
+    """Map the three-state compatibility predicate to its CLI exit status."""
+    if result.can_run is True:
+        return 0
+    if result.can_run is False:
+        return 1
+    return 2
 
 
 # ---------------------------------------------------------------------------
@@ -2444,6 +2580,55 @@ def command_recommend(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_can(args: argparse.Namespace) -> int:
+    result = compatibility_for_identifier(args.model, hardware_profile())
+    if args.json:
+        print(json.dumps(result.to_dict(), indent=2))
+        return compatibility_exit_code(result)
+
+    fit = "YES" if result.can_run is True else "NO" if result.can_run is False else "UNKNOWN"
+    print(f"\n{PROJECT_NAME} compatibility")
+    print("--------------------")
+    print(f"Model:       {result.model_name or result.model_id}")
+    if result.model_name and result.model_name != result.model_id:
+        print(f"Logical ID:  {result.model_id}")
+    print(f"Fit:         {fit}")
+    print(f"Class:       {result.status.value}")
+    print(f"Confidence:  {result.confidence.value.upper()}")
+
+    if result.can_run is True:
+        print("\nPractical configuration")
+        runtime = result.runtime.capitalize() if result.runtime else "unknown"
+        print(f"Runtime:     {runtime}")
+        print(f"Build:       {result.artifact_id}")
+        print(f"Format:      {result.artifact_format}")
+        print(f"Context:     {result.recommended_context:,} tokens")
+
+    if result.estimated_model_memory_gb is not None:
+        print("\nMemory planning")
+        print(f"Model:       ~{result.estimated_model_memory_gb:.1f} GB")
+        if result.planning_budget_gb is not None:
+            print(f"Budget:      ~{result.planning_budget_gb:.1f} GB")
+        if result.memory_headroom_gb is not None:
+            print(f"Headroom:    ~{result.memory_headroom_gb:.1f} GB")
+
+    if result.reason:
+        print(f"\nReason: {result.reason}")
+    if result.evidence:
+        print("\nEvidence")
+        for item in result.evidence:
+            print(f"- {item.detail} ({item.source})")
+    if result.alternatives:
+        print("\nCurated practical alternatives")
+        for alternative in result.alternatives:
+            print(f"- {alternative}")
+    if result.unknowns:
+        print("\nUnknown")
+        for unknown in result.unknowns:
+            print(f"- {unknown}")
+    return compatibility_exit_code(result)
+
+
 def command_setup(args: argparse.Namespace) -> int:
     profile = hardware_profile()
     print_doctor(profile)
@@ -2736,6 +2921,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="balanced",
     )
 
+    can = subparsers.add_parser(
+        "can", help="Check practical compatibility for a curated model."
+    )
+    can.add_argument("model", help="Exact curated Ollama model ID or known alias.")
+    can.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
+
     setup = subparsers.add_parser(
         "setup",
         help="Pull a recommended curated model and optionally benchmark it.",
@@ -2812,6 +3003,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return command_models(args)
     if args.command == "recommend":
         return command_recommend(args)
+    if args.command == "can":
+        return command_can(args)
     if args.command == "setup":
         return command_setup(args)
     if args.command == "bench":

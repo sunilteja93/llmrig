@@ -75,16 +75,24 @@ class LLMRigTests(unittest.TestCase):
 
     def test_compatibility_result_serialization_is_explicit(self):
         result = llmrig.CompatibilityResult(
-            "qwen3.8",
-            "qwen3.8:27b-mlx",
-            "ollama",
-            llmrig.CompatibilityStatus.GOOD,
-            llmrig.Confidence.HIGH,
-            (
+            model_id="qwen3.8",
+            artifact_id="qwen3.8:27b-mlx",
+            runtime="ollama",
+            status=llmrig.CompatibilityStatus.GOOD,
+            confidence=llmrig.Confidence.HIGH,
+            evidence=(
                 llmrig.RecommendationEvidence(
                     "curated-metadata", "snapshot", "artifact is known"
                 ),
             ),
+            model_name="Qwen3.8 27B MLX",
+            can_run=True,
+            artifact_format="MLX",
+            estimated_model_memory_gb=18.0,
+            planning_budget_gb=28.8,
+            memory_headroom_gb=10.8,
+            recommended_context=32768,
+            unknowns=("generation performance is not measured",),
         )
         self.assertEqual(
             result.to_dict(),
@@ -102,6 +110,15 @@ class LLMRigTests(unittest.TestCase):
                     }
                 ],
                 "reason": None,
+                "model_name": "Qwen3.8 27B MLX",
+                "can_run": True,
+                "artifact_format": "MLX",
+                "estimated_model_memory_gb": 18.0,
+                "planning_budget_gb": 28.8,
+                "memory_headroom_gb": 10.8,
+                "recommended_context": 32768,
+                "unknowns": ["generation performance is not measured"],
+                "alternatives": [],
             },
         )
 
@@ -128,6 +145,136 @@ class LLMRigTests(unittest.TestCase):
         self.assertEqual(llmrig.fit_label(spec, self.mac_profile()), "excellent")
         self.assertEqual(result.artifact_id, spec.artifact.artifact_id)
         self.assertTrue(result.evidence)
+
+    def test_can_known_supported_model_has_practical_configuration(self):
+        result = llmrig.compatibility_for_identifier(
+            "qwen3.8:27b-mlx", self.mac_profile()
+        )
+        self.assertTrue(result.can_run)
+        self.assertEqual(result.status, llmrig.CompatibilityStatus.EXCELLENT)
+        self.assertEqual(result.confidence, llmrig.Confidence.HIGH)
+        self.assertEqual(result.runtime, "ollama")
+        self.assertEqual(result.artifact_format, "MLX")
+        self.assertEqual(result.recommended_context, 32768)
+        self.assertEqual(result.estimated_model_memory_gb, 18.0)
+        self.assertEqual(result.memory_headroom_gb, 10.8)
+        self.assertTrue(result.evidence)
+
+    def test_can_model_that_does_not_fit_has_no_configuration(self):
+        result = llmrig.compatibility_for_identifier(
+            "qwen3.8:27b-bf16", self.mac_profile()
+        )
+        self.assertFalse(result.can_run)
+        self.assertEqual(result.status, llmrig.CompatibilityStatus.TOO_LARGE)
+        self.assertIsNone(result.recommended_context)
+        self.assertLess(result.memory_headroom_gb, 0)
+        self.assertIn("qwen3.8:27b-mlx", result.alternatives)
+        self.assertNotIn("qwen3.8:27b-bf16", result.alternatives)
+
+    def test_can_non_native_artifact_is_not_supported_cross_platform(self):
+        result = llmrig.compatibility_for_identifier(
+            "qwen3.8:27b-mlx", self.linux_cpu_profile(64.0)
+        )
+        self.assertFalse(result.can_run)
+        self.assertEqual(result.status, llmrig.CompatibilityStatus.NOT_NATIVE)
+        self.assertIsNone(result.recommended_context)
+
+    def test_can_insufficient_metadata_remains_unknown(self):
+        model = llmrig.ModelSpec(
+            "Unknown-size model",
+            "example:unknown",
+            "test",
+            llmrig.OFFICIAL,
+            7.0,
+            None,
+            "unknown",
+            llmrig.ALL_PLATFORMS,
+            32768,
+            "text",
+            1,
+            "Test-only incomplete metadata.",
+        )
+        result = llmrig.assess_curated_compatibility(model, self.mac_profile())
+        self.assertIsNone(result.can_run)
+        self.assertEqual(result.status, llmrig.CompatibilityStatus.UNKNOWN)
+        self.assertEqual(result.confidence, llmrig.Confidence.UNKNOWN)
+        self.assertIn("artifact memory estimate is unknown", result.unknowns)
+
+    def test_can_unknown_model_is_explicit_and_unresolved(self):
+        result = llmrig.compatibility_for_identifier(
+            "not-in-curated-catalog", self.mac_profile()
+        )
+        self.assertIsNone(result.can_run)
+        self.assertEqual(result.status, llmrig.CompatibilityStatus.UNKNOWN)
+        self.assertEqual(result.confidence, llmrig.Confidence.UNKNOWN)
+        self.assertIsNone(result.artifact_id)
+        self.assertTrue(result.unknowns)
+
+    def test_can_json_uses_domain_result_and_contains_only_json(self):
+        args = llmrig.argparse.Namespace(model="qwen3.8:27b-mlx", json=True)
+        output = io.StringIO()
+        with mock.patch.object(
+            llmrig, "hardware_profile", return_value=self.mac_profile()
+        ), contextlib.redirect_stdout(output):
+            self.assertEqual(llmrig.command_can(args), 0)
+
+        payload = json.loads(output.getvalue())
+        expected = llmrig.compatibility_for_identifier(
+            "qwen3.8:27b-mlx", self.mac_profile()
+        ).to_dict()
+        self.assertEqual(payload, expected)
+        self.assertNotIn("private-user", output.getvalue())
+
+    def test_can_unknown_model_json_is_valid_and_returns_not_found(self):
+        args = llmrig.argparse.Namespace(model="unknown/model", json=True)
+        output = io.StringIO()
+        with mock.patch.object(
+            llmrig, "hardware_profile", return_value=self.mac_profile()
+        ), contextlib.redirect_stdout(output):
+            self.assertEqual(llmrig.command_can(args), 2)
+
+        payload = json.loads(output.getvalue())
+        self.assertIsNone(payload["can_run"])
+        self.assertEqual(payload["status"], "unknown")
+        self.assertIsNone(payload["artifact_id"])
+
+    def test_can_exit_codes_are_three_state_predicate_in_both_modes(self):
+        cases = (
+            ("qwen3.8:27b-mlx", 0, True),
+            ("qwen3.8:27b-bf16", 1, False),
+            ("unknown/model", 2, None),
+        )
+        for json_mode in (False, True):
+            for model, expected_code, expected_can_run in cases:
+                with self.subTest(json=json_mode, model=model):
+                    args = llmrig.argparse.Namespace(model=model, json=json_mode)
+                    output = io.StringIO()
+                    with mock.patch.object(
+                        llmrig, "hardware_profile", return_value=self.mac_profile()
+                    ), contextlib.redirect_stdout(output):
+                        self.assertEqual(llmrig.command_can(args), expected_code)
+                    if json_mode:
+                        self.assertIs(
+                            json.loads(output.getvalue())["can_run"], expected_can_run
+                        )
+
+    def test_can_human_output_renders_confidence_evidence_and_unknowns(self):
+        args = llmrig.argparse.Namespace(model="qwen3.8:27b-mlx", json=False)
+        output = io.StringIO()
+        with mock.patch.object(
+            llmrig, "hardware_profile", return_value=self.mac_profile()
+        ), contextlib.redirect_stdout(output):
+            self.assertEqual(llmrig.command_can(args), 0)
+
+        rendered = output.getvalue()
+        self.assertIn("Fit:         YES", rendered)
+        self.assertIn("Confidence:  HIGH", rendered)
+        self.assertIn("Runtime:     Ollama", rendered)
+        self.assertIn("Build:       qwen3.8:27b-mlx", rendered)
+        self.assertIn("Format:      MLX", rendered)
+        self.assertNotIn("Artifact:", rendered)
+        self.assertIn("Evidence", rendered)
+        self.assertIn("Unknown", rendered)
 
     def test_alignment_aliases(self):
         self.assertEqual(llmrig.normalize_category("official"), llmrig.OFFICIAL)
