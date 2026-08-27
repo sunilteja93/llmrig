@@ -131,10 +131,13 @@ llmrig can qwen3.8:27b-mlx --json
 Curated identifiers receive the existing practical compatibility analysis. An
 `owner/repository` Hugging Face ID is resolved through read-only metadata and file
 listings, without downloading weights. LLMRig recognizes evidenced GGUF, MLX, and
-Safetensors artifacts, but leaves execution compatibility unknown because no new
-runtime support is implied by artifact recognition. Memory results for curated
-models are conservative planning estimates, and unmeasured runtime overhead and
-performance remain explicitly unknown.
+Safetensors artifacts. For generic GGUF and MLX artifacts it reports matching
+llama.cpp or MLX-LM capability candidates and whether those runtimes are locally
+available; Safetensors alone does not imply a runnable path. Runtime installation,
+current availability, format support, and total machine compatibility remain separate.
+Even a detected candidate is not a claim that inference was tested. Memory results
+are conservative planning estimates, and unmeasured runtime overhead, practical
+context, and performance remain explicitly unknown.
 
 `llmrig can` also behaves as a three-state Unix predicate in both human and JSON
 modes: exit `0` means the model can run, exit `1` means it cannot run, and exit
