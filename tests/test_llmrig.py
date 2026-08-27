@@ -49,13 +49,18 @@ class LLMRigTests(unittest.TestCase):
         self.assertEqual(spec.artifact.artifact_id, spec.ollama)
         self.assertEqual(spec.artifact.runtime, "ollama")
         self.assertEqual(spec.artifact.format, "MLX")
+        self.assertIsNone(spec.artifact.quantization)
+        quantized = llmrig.resolve_curated_model("qwen3.8:27b-q4_K_M").artifact
+        self.assertEqual(quantized.format, "Unknown")
+        self.assertEqual(quantized.quantization, "Q4_K_M")
+        self.assertIn("artifact file format is unknown", quantized.unknowns)
 
     def test_model_and_artifact_reject_invalid_known_values(self):
         with self.assertRaises(ValueError):
             llmrig.Model("model", "Model", 0, ("text",))
         with self.assertRaises(ValueError):
             llmrig.ModelArtifact(
-                "artifact", "model", "ollama", "Q4", None, None, ()
+                "artifact", "model", "ollama", "", None, None, ()
             )
 
     def test_evidence_requires_provenance_and_serializes(self):
@@ -230,6 +235,10 @@ class LLMRigTests(unittest.TestCase):
         output = io.StringIO()
         with mock.patch.object(
             llmrig, "hardware_profile", return_value=self.mac_profile()
+        ), mock.patch.object(
+            llmrig.HF_SOURCE,
+            "resolve",
+            return_value=llmrig.ModelResolution("not_found_or_inaccessible", None),
         ), contextlib.redirect_stdout(output):
             self.assertEqual(llmrig.command_can(args), 2)
 
@@ -251,6 +260,10 @@ class LLMRigTests(unittest.TestCase):
                     output = io.StringIO()
                     with mock.patch.object(
                         llmrig, "hardware_profile", return_value=self.mac_profile()
+                    ), mock.patch.object(
+                        llmrig.HF_SOURCE,
+                        "resolve",
+                        return_value=llmrig.ModelResolution("not_found_or_inaccessible", None),
                     ), contextlib.redirect_stdout(output):
                         self.assertEqual(llmrig.command_can(args), expected_code)
                     if json_mode:
@@ -386,6 +399,207 @@ class LLMRigTests(unittest.TestCase):
             "pipeline_tag": "automatic-speech-recognition",
         }
         self.assertFalse(llmrig.is_live_llm_candidate(item))
+
+    def test_hf_gguf_artifact_recognition_and_provenance(self):
+        payload = {
+            "id": "org/model-GGUF",
+            "pipeline_tag": "text-generation",
+            "config": {"max_position_embeddings": 8192},
+            "siblings": [
+                {"rfilename": "model-Q4_K_M.gguf", "size": 4_000_000_000}
+            ],
+        }
+        with mock.patch.object(llmrig, "http_json", return_value=(payload, {})):
+            resolution = llmrig.HuggingFaceModelSource().resolve("org/model-GGUF")
+        artifact = resolution.artifacts[0]
+        self.assertEqual(artifact.format, "GGUF")
+        self.assertEqual(artifact.quantization, "Q4_K_M")
+        self.assertEqual(artifact.size_bytes, 4_000_000_000)
+        self.assertEqual(artifact.context_max, 8192)
+        self.assertIsNone(artifact.runtime)
+        self.assertIn("runtime compatibility is unknown", artifact.unknowns)
+        self.assertEqual(
+            {item.kind for item in artifact.evidence},
+            {"deterministic-inference", "verified-metadata"},
+        )
+
+    def test_hf_mlx_recognition_uses_explicit_repository_metadata(self):
+        payload = {
+            "id": "org/model-mlx",
+            "library_name": "mlx",
+            "config": {
+                "max_position_embeddings": 32768,
+                "quantization": {"bits": 4},
+            },
+            "siblings": [
+                {"rfilename": "model-00001-of-00002.safetensors", "size": 100},
+                {"rfilename": "model-00002-of-00002.safetensors", "size": 200},
+            ],
+        }
+        artifacts = llmrig.hf_artifacts_from_metadata(
+            llmrig.hf_model_from_metadata("org/model-mlx", payload), payload
+        )
+        self.assertEqual(len(artifacts), 1)
+        self.assertEqual(artifacts[0].format, "MLX")
+        self.assertEqual(artifacts[0].quantization, "4-bit")
+        self.assertEqual(artifacts[0].size_bytes, 300)
+        self.assertEqual(artifacts[0].evidence[0].kind, "verified-metadata")
+
+    def test_hf_safetensors_recognition(self):
+        payload = {
+            "id": "org/native-model",
+            "pipeline_tag": "text-generation",
+            "siblings": [{"rfilename": "model.safetensors", "size": 1234}],
+        }
+        artifacts = llmrig.hf_artifacts_from_metadata(
+            llmrig.hf_model_from_metadata("org/native-model", payload), payload
+        )
+        self.assertEqual(artifacts[0].format, "Safetensors")
+        self.assertEqual(artifacts[0].size_bytes, 1234)
+        self.assertIsNone(artifacts[0].quantization)
+
+    def test_hf_repository_can_expose_multiple_artifact_types(self):
+        payload = {
+            "id": "org/mixed-model",
+            "siblings": [
+                {"rfilename": "model-Q8_0.gguf", "size": 800},
+                {"rfilename": "model.safetensors", "size": 1600},
+            ],
+        }
+        artifacts = llmrig.hf_artifacts_from_metadata(
+            llmrig.hf_model_from_metadata("org/mixed-model", payload), payload
+        )
+        self.assertEqual([item.format for item in artifacts], ["GGUF", "Safetensors"])
+
+    def test_hf_explicit_base_model_separates_logical_model_from_repository(self):
+        payload = {
+            "id": "converter/model-GGUF",
+            "cardData": {"base_model": "upstream/model"},
+            "siblings": [{"rfilename": "model-Q4_K_M.gguf", "size": 400}],
+        }
+        with mock.patch.object(llmrig, "http_json", return_value=(payload, {})):
+            resolution = llmrig.HuggingFaceModelSource().resolve(
+                "converter/model-GGUF"
+            )
+        self.assertEqual(resolution.model.model_id, "upstream/model")
+        self.assertEqual(
+            resolution.artifacts[0].artifact_id,
+            "hf://converter/model-GGUF/model-Q4_K_M.gguf",
+        )
+        self.assertEqual(resolution.artifacts[0].model_id, "upstream/model")
+        self.assertTrue(
+            any("base_model" in item.source for item in resolution.evidence)
+        )
+
+    def test_hf_missing_file_metadata_stays_unknown(self):
+        payload = {
+            "id": "org/missing-metadata",
+            "siblings": [{"rfilename": "weights.gguf"}],
+        }
+        artifact = llmrig.hf_artifacts_from_metadata(
+            llmrig.hf_model_from_metadata("org/missing-metadata", payload), payload
+        )[0]
+        self.assertIsNone(artifact.size_bytes)
+        self.assertIsNone(artifact.quantization)
+        self.assertIn("artifact size is unknown", artifact.unknowns)
+        self.assertIn("quantization is unknown", artifact.unknowns)
+
+    def test_hf_ambiguous_quantization_filename_stays_unknown(self):
+        quantization, status = llmrig.infer_gguf_quantization(
+            "model-Q4_K_M-Q5_K_M.gguf"
+        )
+        self.assertIsNone(quantization)
+        self.assertEqual(status, "ambiguous")
+
+    def test_hf_ambiguous_safetensors_group_does_not_invent_size(self):
+        payload = {
+            "id": "org/ambiguous-weights",
+            "siblings": [
+                {"rfilename": "model.safetensors", "size": 100},
+                {"rfilename": "alternate.safetensors", "size": 200},
+            ],
+        }
+        artifact = llmrig.hf_artifacts_from_metadata(
+            llmrig.hf_model_from_metadata("org/ambiguous-weights", payload), payload
+        )[0]
+        self.assertIsNone(artifact.size_bytes)
+        self.assertIn(
+            "artifact size is unknown because weight-file grouping is ambiguous",
+            artifact.unknowns,
+        )
+
+    def test_hf_unknown_repository_is_distinct_from_network_failure(self):
+        for status_code in (401, 404):
+            unavailable = llmrig.urllib.error.HTTPError(
+                "https://huggingface.co/api/models/org/missing",
+                status_code,
+                "unavailable",
+                {},
+                None,
+            )
+            with mock.patch.object(llmrig, "http_json", side_effect=unavailable):
+                missing = llmrig.HuggingFaceModelSource().resolve("org/missing")
+            self.assertEqual(missing.status, "not_found_or_inaccessible")
+        with mock.patch.object(llmrig, "http_json", side_effect=OSError("offline")):
+            failed = llmrig.HuggingFaceModelSource().resolve("org/model")
+        self.assertEqual(failed.status, "network_error")
+        self.assertNotIn("offline", failed.message)
+
+    def test_generic_can_json_is_deterministic_and_privacy_safe(self):
+        payload = {
+            "id": "org/model",
+            "pipeline_tag": "text-generation",
+            "siblings": [{"rfilename": "model-Q4_K_M.gguf", "size": 4000}],
+        }
+        args = llmrig.argparse.Namespace(model="org/model", json=True)
+        outputs = []
+        with mock.patch.object(llmrig, "http_json", return_value=(payload, {})), mock.patch.object(
+            llmrig, "hardware_profile", return_value=self.mac_profile()
+        ):
+            for _ in range(2):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(llmrig.command_can(args), 2)
+                outputs.append(output.getvalue())
+        self.assertEqual(outputs[0], outputs[1])
+        parsed = json.loads(outputs[0])
+        self.assertEqual(parsed["compatibility_status"], "unknown")
+        self.assertEqual(parsed["compatibility_confidence"], "unknown")
+        self.assertEqual(parsed["resolution_status"], "resolved")
+        self.assertEqual(parsed["resolution_confidence"], "high")
+        self.assertIsNone(parsed["can_run"])
+        self.assertEqual(parsed["artifacts"][0]["format"], "GGUF")
+        self.assertNotIn("private-user", outputs[0])
+
+    def test_generic_can_human_output_distinguishes_artifact_from_runtime(self):
+        payload = {
+            "id": "org/model",
+            "siblings": [{"rfilename": "model-Q4_K_M.gguf", "size": 4000}],
+        }
+        args = llmrig.argparse.Namespace(model="org/model", json=False)
+        output = io.StringIO()
+        with mock.patch.object(llmrig, "http_json", return_value=(payload, {})), mock.patch.object(
+            llmrig, "hardware_profile", return_value=self.mac_profile()
+        ), contextlib.redirect_stdout(output):
+            self.assertEqual(llmrig.command_can(args), 2)
+        rendered = output.getvalue()
+        self.assertIn("Compatibility:            unknown", rendered)
+        self.assertIn("Compatibility confidence: UNKNOWN", rendered)
+        self.assertIn("Resolution status:         resolved", rendered)
+        self.assertIn("Resolution confidence:     HIGH", rendered)
+        self.assertIn("Detected artifacts", rendered)
+        self.assertIn("Build: hf://org/model/model-Q4_K_M.gguf", rendered)
+        self.assertIn("Format: GGUF", rendered)
+        self.assertIn("Quantization: Q4_K_M", rendered)
+        self.assertIn("Runtime: unknown", rendered)
+
+    def test_curated_can_does_not_call_generic_source(self):
+        with mock.patch.object(llmrig.HF_SOURCE, "resolve") as generic_resolve:
+            result = llmrig.compatibility_for_identifier(
+                "qwen3.8:27b-mlx", self.mac_profile()
+            )
+        self.assertTrue(result.can_run)
+        generic_resolve.assert_not_called()
 
 
     def test_unload_model_uses_keep_alive_zero(self):
