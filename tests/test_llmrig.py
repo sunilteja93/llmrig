@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -1462,6 +1463,279 @@ class LLMRigTests(unittest.TestCase):
         payload = json.loads(serialized)
         self.assertEqual(payload["model_store"], str(Path("~") / ".ollama" / "models"))
         self.assertNotIn("private-user", serialized)
+
+    def passport_fixture(self, timestamp="2026-08-27T00:00:00Z"):
+        return llmrig._passport_payload(
+            timestamp=timestamp,
+            logical_model_id="org/model",
+            artifact_id="model:q4",
+            artifact_fingerprint="sha256:abc",
+            artifact_format="GGUF",
+            quantization="Q4_K_M",
+            artifact_size_bytes=4_000_000_000,
+            runtime="ollama",
+            runtime_version="0.32.13",
+            adapter="ollama-race-adapter",
+            hardware={"os": "Darwin", "architecture": "arm64", "cpu_or_chip": "Apple M4", "ram_gib": 48.0, "accelerator": "Apple Metal"},
+            workload={"prompt": "fixed", "requested_context": 4096, "num_predict": 128, "temperature": 0, "seed": 42, "think": False, "warmup_count": 1, "warmup_token_cap": 32, "measured_run_count": 2, "timeout_s": 120, "other_generation_settings": {}},
+            raw_samples=(
+                {"generation_tps": 10.0, "prompt_tps": 20.0, "wall_seconds": 2.0, "total_duration_s": 1.9, "eval_count": 100},
+                {"generation_tps": 12.0, "prompt_tps": None, "wall_seconds": 2.2, "total_duration_s": 2.1, "eval_count": 100},
+            ),
+        )
+
+    def test_successful_passport_raw_samples_reproduce_aggregates(self):
+        payload = self.passport_fixture().to_dict()
+        self.assertEqual(llmrig.validate_passport(payload), [])
+        self.assertEqual(payload["measurement"]["aggregates"]["generation_tps"], 11.0)
+        self.assertEqual(payload["measurement"]["aggregates"]["prompt_evaluation_tps"], 20.0)
+        self.assertEqual(payload["measurement"]["aggregates"]["generated_tokens"], 200)
+        self.assertEqual(len(payload["measurement"]["raw_samples"]), 2)
+
+    def test_warmups_are_metadata_not_measured_samples(self):
+        payload = self.passport_fixture().to_dict()
+        self.assertEqual(payload["workload"]["warmup_count"], 1)
+        self.assertEqual(payload["measurement"]["measured_run_count"], 2)
+        self.assertNotIn("warmup", json.dumps(payload["measurement"]))
+
+    def test_canonical_serialization_ignores_dictionary_order(self):
+        self.assertEqual(
+            llmrig.sha256_identity({"a": 1, "b": 2}),
+            llmrig.sha256_identity({"b": 2, "a": 1}),
+        )
+
+    def test_passport_id_changes_but_configuration_stays_for_distinct_runs(self):
+        first = self.passport_fixture("one").to_dict()
+        second = self.passport_fixture("two").to_dict()
+        self.assertNotEqual(first["passport_id"], second["passport_id"])
+        self.assertEqual(first["configuration_fingerprint"], second["configuration_fingerprint"])
+
+    def test_passport_id_hash_explicitly_excludes_stored_id(self):
+        payload = self.passport_fixture().to_dict()
+        stored = payload["passport_id"]
+        without_id = dict(payload)
+        without_id.pop("passport_id")
+        self.assertEqual(stored, llmrig.sha256_identity(without_id))
+        payload["passport_id"] = "f" * 64
+        self.assertEqual(stored, llmrig.passport_id_for_document(payload))
+        self.assertIn("passport ID mismatch", llmrig.validate_passport(payload))
+
+    def test_measurements_do_not_change_configuration_fingerprint(self):
+        first = self.passport_fixture().to_dict()
+        changed = self.passport_fixture().to_dict()
+        changed["measurement"]["raw_samples"][0]["generation_tps"] = 999.0
+        changed["measurement"]["aggregates"]["generation_tps"] = 505.5
+        self.assertEqual(first["configuration_fingerprint"], changed["configuration_fingerprint"])
+
+    def test_configuration_fingerprint_changes_for_material_dimensions(self):
+        original = self.passport_fixture().to_dict()
+        for section, key, value in (
+            ("model", "artifact_or_build", "other"),
+            ("runtime", "runtime_version", "different"),
+            ("hardware", "ram_gib", 64.0),
+            ("workload", "requested_context", 8192),
+        ):
+            changed = json.loads(json.dumps(original))
+            changed[section][key] = value
+            config = {"model": changed["model"], "runtime": changed["runtime"], "hardware": changed["hardware"], "workload": changed["workload"], "benchmark_method": changed["identity"]["benchmark_method"]}
+            self.assertNotEqual(original["configuration_fingerprint"], llmrig.sha256_identity(config))
+        changed_method = json.loads(json.dumps(original))
+        changed_method["identity"]["benchmark_method"] = "new-method"
+        config = {"model": changed_method["model"], "runtime": changed_method["runtime"], "hardware": changed_method["hardware"], "workload": changed_method["workload"], "benchmark_method": "new-method"}
+        self.assertNotEqual(original["configuration_fingerprint"], llmrig.sha256_identity(config))
+
+    def test_validation_rejects_schema_ids_missing_fields_and_impossible_success(self):
+        for mutation, expected in (
+            (lambda p: p.update(schema_version="9"), "unsupported schema version"),
+            (lambda p: p.update(passport_id="bad"), "passport_id must be"),
+            (lambda p: p.update(configuration_fingerprint="bad"), "configuration_fingerprint must be"),
+            (lambda p: p.pop("runtime"), "missing required fields"),
+            (lambda p: p["measurement"].update(raw_samples=[], measured_run_count=0), "successful benchmark requires"),
+        ):
+            payload = self.passport_fixture().to_dict()
+            mutation(payload)
+            self.assertTrue(any(expected in error for error in llmrig.validate_passport(payload)))
+
+    def test_failed_passport_cannot_masquerade_as_measurement(self):
+        payload = self.passport_fixture().to_dict()
+        payload["measurement"]["execution_status"] = "failed"
+        self.assertTrue(any("failed benchmark" in error for error in llmrig.validate_passport(payload)))
+
+    def test_passport_privacy_rejects_paths_identity_and_credentials(self):
+        for field, value in (
+            ("runtime_version", "/Users/private/bin/ollama"),
+            ("local_path", "/tmp/model.gguf"),
+            ("hostname", "private-mac"),
+            ("failure", "Bearer hf_abcdefghijklmnop"),
+        ):
+            payload = self.passport_fixture().to_dict()
+            payload["runtime"][field] = value
+            self.assertTrue(llmrig.passport_privacy_issues(payload))
+        with mock.patch.dict(os.environ, {"USER": "private-user"}), mock.patch.object(
+            llmrig.platform, "node", return_value="private-host"
+        ):
+            self.assertIsNone(llmrig.passport_safe_runtime_version("tool by private-user"))
+            self.assertIsNone(llmrig.passport_safe_runtime_version("tool on private-host"))
+            self.assertIsNone(llmrig.passport_safe_runtime_version("Bearer hf_abcdefghijklmnop"))
+
+    def test_comparison_classifications(self):
+        exact = self.passport_fixture().to_dict()
+        self.assertEqual(llmrig.compare_passports(exact, dict(exact))["classification"], "exact")
+        quant = json.loads(json.dumps(exact))
+        quant["model"]["quantization"] = "Q8_0"
+        quant["configuration_fingerprint"] = "different"
+        self.assertEqual(llmrig.compare_passports(exact, quant)["classification"], "comparable_with_warnings")
+        workload = json.loads(json.dumps(exact))
+        workload["workload"]["prompt"] = "other"
+        workload["configuration_fingerprint"] = "different"
+        self.assertEqual(llmrig.compare_passports(exact, workload)["classification"], "not_comparable")
+        hardware = json.loads(json.dumps(exact))
+        hardware["hardware"]["ram_gib"] = 64
+        hardware["configuration_fingerprint"] = "different"
+        comparison = llmrig.compare_passports(exact, hardware)
+        self.assertEqual(comparison["classification"], "comparable_with_warnings")
+        self.assertIn("different hardware", comparison["reasons"])
+
+    def test_passport_verify_is_read_only_and_offline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "passport.json"
+            llmrig.write_passport(self.passport_fixture(), path)
+            args = llmrig.argparse.Namespace(file=str(path))
+            with mock.patch.object(llmrig, "http_json") as network, mock.patch.object(llmrig.HF_SOURCE, "resolve") as huggingface, mock.patch.object(llmrig, "ollama_generate") as inference, mock.patch.object(llmrig, "run_cmd") as subprocess_call, mock.patch.object(llmrig, "pull_model") as pull, mock.patch.object(llmrig, "install_ollama_help") as install, contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(llmrig.command_passport_verify(args), 0)
+            network.assert_not_called()
+            huggingface.assert_not_called()
+            inference.assert_not_called()
+            subprocess_call.assert_not_called()
+            pull.assert_not_called()
+            install.assert_not_called()
+
+    def test_passport_validation_accepts_reformatted_json_and_rejects_tamper(self):
+        payload = self.passport_fixture().to_dict()
+        reordered = json.loads(json.dumps(payload, sort_keys=True))
+        self.assertEqual(llmrig.validate_passport(reordered), [])
+        reordered["measurement"]["raw_samples"][0]["generation_tps"] = 999
+        errors = llmrig.validate_passport(reordered)
+        self.assertIn("measurement aggregates do not match raw samples", errors)
+        self.assertIn("passport ID mismatch", errors)
+
+    def test_legacy_benchmark_conversion_retains_unknowns_without_fabrication(self):
+        result = {"timestamp": "fixed", "model": "unknown/model", "context": 4096, "hardware": {"os": "Darwin", "arch": "arm64", "cpu": "Apple", "ram_gib": 48}, "ollama": {"version": "1.0"}, "running_model": {}, "throughput_runs": [{"generation_tps": 4.0, "prompt_tps": None, "wall_seconds": 1.0, "total_duration_s": 0.9, "eval_count": 4}]}
+        payload = llmrig.passport_from_benchmark_result(result).to_dict()
+        self.assertIsNone(payload["model"]["artifact_format"])
+        self.assertIsNone(payload["model"]["quantization"])
+        self.assertIsNone(payload["model"]["artifact_size_bytes"])
+        self.assertIsNone(payload["measurement"]["aggregates"]["prompt_evaluation_tps"])
+        self.assertEqual(llmrig.validate_passport(payload), [])
+
+    def test_execution_adapter_retains_only_measured_raw_samples(self):
+        response = {"eval_count": 10, "eval_duration": 1_000_000_000, "prompt_eval_count": 2, "prompt_eval_duration": 1_000_000_000, "total_duration": 2_000_000_000}
+        adapter = llmrig.OllamaExecutionAdapter()
+        with mock.patch.object(llmrig.OLLAMA_RUNTIME, "is_available", return_value=True), mock.patch.object(llmrig, "isolate_ollama_for_benchmark", return_value=[]), mock.patch.object(llmrig, "ollama_generate", return_value=response), mock.patch.object(llmrig, "unload_ollama_model", return_value=True):
+            competitor = adapter.benchmark(self.race_configuration(), self.race_workload())
+        self.assertEqual(len(competitor.raw_samples), 2)
+
+    def test_distinct_bench_and_race_samples_survive_without_reconstruction(self):
+        raw = (
+            {"generation_tps": 40.0, "prompt_tps": 80.0, "wall_seconds": 2.0, "total_duration_s": 1.9, "eval_count": 100, "eval_duration_s": 1.5},
+            {"generation_tps": 60.0, "prompt_tps": None, "wall_seconds": 1.5, "total_duration_s": 1.4, "eval_count": 90, "eval_duration_s": 1.0},
+        )
+        bench = {"timestamp": "fixed", "model": "unknown/model", "context": 4096, "hardware": {}, "ollama": {}, "running_model": {}, "throughput_runs": list(raw)}
+        bench_samples = llmrig.passport_from_benchmark_result(bench).to_dict()["measurement"]["raw_samples"]
+        self.assertEqual([item["generation_tps"] for item in bench_samples], [40.0, 60.0])
+        competitor = llmrig.replace(self.race_competitor(), raw_samples=raw)
+        race = llmrig.RaceResult("completed", "logical/model", None, llmrig.RACE_METHOD_VERSION, "fixed", self.race_workload(), {}, (), (), (competitor,))
+        race_samples = llmrig.passport_from_race_competitor(race, competitor).to_dict()["measurement"]["raw_samples"]
+        self.assertEqual([item["generation_tps"] for item in race_samples], [40.0, 60.0])
+        self.assertEqual([item["generated_tokens"] for item in race_samples], [100, 90])
+
+    def test_failed_race_exports_no_standalone_success_passports(self):
+        success = llmrig.replace(self.race_competitor(), raw_samples=({"generation_tps": 40.0, "prompt_tps": 80.0, "wall_seconds": 2.0, "total_duration_s": 1.9, "eval_count": 100},))
+        failed = llmrig.replace(self.race_competitor(artifact="model:failed"), execution_status="failed", generation_tps=None, prompt_eval_tps=None, total_latency_s=None, generated_tokens=None, measured_runs=0, generation_samples=0, prompt_eval_samples=0, latency_samples=0, failure="benchmark execution failed")
+        race = llmrig.RaceResult("failed", "logical/model", "incomplete", llmrig.RACE_METHOD_VERSION, "fixed", self.race_workload(), {}, (), (), (success, failed))
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "passports"
+            self.assertEqual(llmrig.export_race_passports(race, output), ())
+            self.assertFalse(output.exists())
+
+    def test_bench_passport_requires_one_model_before_execution(self):
+        args = llmrig.argparse.Namespace(host="host", all_installed=True, model=None, context=4096, runs=1, output_dir=None, passport="out.json")
+        with mock.patch.object(llmrig.OLLAMA_RUNTIME, "ensure_available", return_value=True), mock.patch.object(llmrig, "installed_ollama_models", return_value=[{"name": "qwen:a", "id": "a"}, {"name": "qwen:b", "id": "b"}]), mock.patch.object(llmrig, "run_benchmark") as benchmark:
+            self.assertEqual(llmrig.command_bench(args), 2)
+        benchmark.assert_not_called()
+
+    def test_bench_passport_export_reuses_benchmark_and_local_digest(self):
+        result = {"timestamp": "fixed", "model": "qwen3.8:27b-mlx", "context": 4096, "hardware": {"os": "Darwin", "arch": "arm64", "cpu": "Apple", "ram_gib": 48}, "ollama": {"version": "1.0"}, "running_model": {}, "throughput_runs": [{"generation_tps": 4.0, "prompt_tps": 5.0, "wall_seconds": 1.0, "total_duration_s": 0.9, "eval_count": 4}], "aggregate": {}}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "out.json"
+            args = llmrig.argparse.Namespace(host="host", all_installed=False, model="qwen3.8:27b-mlx", context=4096, runs=1, output_dir=None, passport=str(path))
+            with mock.patch.object(llmrig.OLLAMA_RUNTIME, "ensure_available", return_value=True), mock.patch.object(llmrig, "installed_ollama_models", return_value=[{"name": "qwen3.8:27b-mlx", "id": "digest"}]), mock.patch.object(llmrig, "run_benchmark", return_value=result), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(llmrig.command_bench(args), 0)
+            payload = json.loads(path.read_text())
+            self.assertEqual(payload["model"]["artifact_fingerprint"], "digest")
+            self.assertEqual(llmrig.validate_passport(payload), [])
+
+    def test_bench_passport_timeout_matches_actual_measured_execution(self):
+        response = {
+            "response": "391",
+            "eval_count": 40,
+            "eval_duration": 1_000_000_000,
+            "prompt_eval_count": 10,
+            "prompt_eval_duration": 500_000_000,
+            "total_duration": 2_000_000_000,
+        }
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            llmrig, "ensure_ollama_service", return_value=True
+        ), mock.patch.object(
+            llmrig, "isolate_ollama_for_benchmark", return_value=[]
+        ), mock.patch.object(
+            llmrig, "ollama_generate", return_value=response
+        ) as generate, mock.patch.object(
+            llmrig, "unload_ollama_model", return_value=True
+        ), mock.patch.object(
+            llmrig, "memory_snapshot", return_value={}
+        ), mock.patch.object(
+            llmrig, "running_model_details", return_value={}
+        ), mock.patch.object(
+            llmrig, "shareable_hardware_profile", return_value={}
+        ), mock.patch.object(
+            llmrig, "shareable_ollama_info", return_value={}
+        ), contextlib.redirect_stdout(io.StringIO()):
+            result = llmrig.run_benchmark(
+                "qwen3.8:27b-mlx", 4096, 1, output_dir=Path(directory)
+            )
+        passport = llmrig.passport_from_benchmark_result(result).to_dict()
+        timed_call = next(
+            call for call in generate.call_args_list if call.args[2] == llmrig.SPEED_PROMPT
+        )
+        self.assertEqual(
+            timed_call.kwargs["timeout"], passport["workload"]["timeout_s"]
+        )
+        self.assertEqual(passport["workload"]["timeout_s"], llmrig.BENCH_REQUEST_TIMEOUT)
+
+    def test_exported_race_passport_normalizes_and_validates_phase5_hardware(self):
+        raw = (
+            {"generation_tps": 40.0, "prompt_tps": 80.0, "wall_seconds": 2.0, "total_duration_s": 1.9, "eval_count": 100},
+            {"generation_tps": 60.0, "prompt_tps": 90.0, "wall_seconds": 1.5, "total_duration_s": 1.4, "eval_count": 100},
+        )
+        competitor = llmrig.replace(self.race_competitor(), raw_samples=raw)
+        hardware = {
+            "os": "Darwin", "arch": "arm64", "cpu": "Apple Test Chip",
+            "ram_gib": 48.0, "accelerator": "Metal test accelerator",
+        }
+        race = llmrig.RaceResult(
+            "completed", "logical/model", None, llmrig.RACE_METHOD_VERSION,
+            "fixed", self.race_workload(), hardware, (), (), (competitor,),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            paths = llmrig.export_race_passports(race, Path(directory))
+            self.assertEqual(len(paths), 1)
+            document = json.loads(paths[0].read_text())
+        self.assertEqual(
+            document["hardware"],
+            {"os": "Darwin", "architecture": "arm64", "cpu_or_chip": "Apple Test Chip", "ram_gib": 48.0, "accelerator": "Metal test accelerator"},
+        )
+        self.assertEqual(llmrig.validate_passport(document), [])
 
 if __name__ == "__main__":
     unittest.main()

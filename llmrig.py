@@ -8,6 +8,7 @@ import ctypes
 import datetime as dt
 import importlib.metadata
 import importlib.util
+import hashlib
 import json
 import os
 import platform
@@ -36,6 +37,9 @@ RACE_METHOD_VERSION = "race-v1"
 RACE_CONTEXT = 4096
 RACE_NUM_PREDICT = 128
 RACE_NOISE_THRESHOLD = 0.05
+PASSPORT_SCHEMA_VERSION = "1.0"
+BENCHMARK_METHOD_VERSION = "ollama-bench-v1"
+BENCH_REQUEST_TIMEOUT = 600
 
 OFFICIAL = "official"
 REDUCED_REFUSAL = "community-reduced-refusal"
@@ -322,6 +326,7 @@ class RaceCompetitor:
     evidence: Tuple[RecommendationEvidence, ...] = ()
     warnings: Tuple[str, ...] = ()
     failure: Optional[str] = None
+    raw_samples: Tuple[Dict[str, Any], ...] = ()
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -345,6 +350,7 @@ class RaceCompetitor:
             "evidence": [item.to_dict() for item in self.evidence],
             "warnings": list(self.warnings),
             "failure": self.failure,
+            "raw_samples": [dict(item) for item in self.raw_samples],
         }
 
 
@@ -383,6 +389,38 @@ class RaceResult:
             "competitors": [item.to_dict() for item in self.competitors],
             "warnings": list(self.warnings),
             "winners": {metric: value for metric, value in self.winners},
+        }
+
+
+@dataclass(frozen=True)
+class BenchmarkPassport:
+    """Portable record of one measured execution, not an attestation."""
+
+    schema_version: str
+    passport_id: str
+    configuration_fingerprint: str
+    identity: Dict[str, Any]
+    model: Dict[str, Any]
+    runtime: Dict[str, Any]
+    hardware: Dict[str, Any]
+    workload: Dict[str, Any]
+    measurement: Dict[str, Any]
+    evidence: Dict[str, Any]
+    calibration: Dict[str, Any]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "passport_id": self.passport_id,
+            "configuration_fingerprint": self.configuration_fingerprint,
+            "identity": dict(self.identity),
+            "model": dict(self.model),
+            "runtime": dict(self.runtime),
+            "hardware": dict(self.hardware),
+            "workload": dict(self.workload),
+            "measurement": dict(self.measurement),
+            "evidence": dict(self.evidence),
+            "calibration": dict(self.calibration),
         }
 
 
@@ -3195,7 +3233,7 @@ def ollama_generate(
     context: int,
     num_predict: int,
     think: bool = False,
-    timeout: int = 600,
+    timeout: int = BENCH_REQUEST_TIMEOUT,
 ) -> Dict[str, Any]:
     payload = {
         "model": model,
@@ -3348,6 +3386,425 @@ def shareable_ollama_info() -> Dict[str, Any]:
     return info
 
 
+def canonical_json(value: Any) -> str:
+    """Serialize identity-bearing data independently of display formatting."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def sha256_identity(value: Any) -> str:
+    return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def passport_id_for_document(document: Dict[str, Any]) -> str:
+    """Hash canonical passport content with the stored passport_id excluded."""
+    content = dict(document)
+    content.pop("passport_id", None)
+    return sha256_identity(content)
+
+
+def configuration_fingerprint_content(
+    model: Dict[str, Any],
+    runtime: Dict[str, Any],
+    hardware: Dict[str, Any],
+    workload: Dict[str, Any],
+    benchmark_method: Any,
+) -> Dict[str, Any]:
+    """Exact canonical field set for benchmark-configuration identity."""
+    return {
+        "model": model,
+        "runtime": runtime,
+        "hardware": hardware,
+        "workload": workload,
+        "benchmark_method": benchmark_method,
+    }
+
+
+def passport_hardware(profile: Dict[str, Any]) -> Dict[str, Any]:
+    """Select only benchmark-relevant, privacy-safe hardware facts."""
+    return {
+        "os": profile.get("os") or profile.get("platform"),
+        "architecture": profile.get("architecture") or profile.get("arch"),
+        "cpu_or_chip": profile.get("cpu_or_chip") or profile.get("cpu"),
+        "ram_gib": profile.get("ram_gib"),
+        "accelerator": profile.get("accelerator") or accelerator_summary(profile),
+    }
+
+
+def passport_safe_runtime_version(value: Optional[str]) -> Optional[str]:
+    """Retain a useful version only when it contains no local identity or secret."""
+    text = race_safe_runtime_version(value)
+    if not text:
+        return None
+    private_values = {
+        str(os.environ.get("USER") or "").strip(),
+        str(os.environ.get("USERNAME") or "").strip(),
+        str(platform.node() or "").strip(),
+    }
+    if any(item and re.search(rf"(?<!\w){re.escape(item)}(?!\w)", text) for item in private_values):
+        return None
+    if passport_privacy_issues({"runtime_version": text}):
+        return None
+    return text
+
+
+def _mean(values: Sequence[Any], digits: int) -> Optional[float]:
+    usable = [float(value) for value in values if value is not None]
+    return round(sum(usable) / len(usable), digits) if usable else None
+
+
+def canonical_passport_samples(
+    raw_samples: Sequence[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Preserve actual per-run runtime measurements in their execution order."""
+    return [
+        {
+            "run": index,
+            "generation_tps": sample.get("generation_tps"),
+            "prompt_evaluation_tps": sample.get("prompt_tps"),
+            "latency_s": sample.get("wall_seconds"),
+            "runtime_total_duration_s": sample.get("total_duration_s"),
+            "generated_tokens": sample.get("eval_count"),
+            "generation_duration_s": sample.get("eval_duration_s"),
+            "prompt_evaluation_tokens": sample.get("prompt_eval_count"),
+            "prompt_evaluation_duration_s": sample.get("prompt_eval_duration_s"),
+            "load_duration_s": sample.get("load_duration_s"),
+        }
+        for index, sample in enumerate(raw_samples, start=1)
+    ]
+
+
+def aggregate_passport_samples(samples: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """Canonical passport aggregation: means rounded half-even by Python round."""
+    return {
+        "generation_tps": _mean([item.get("generation_tps") for item in samples], 2),
+        "prompt_evaluation_tps": _mean(
+            [item.get("prompt_evaluation_tps") for item in samples], 2
+        ),
+        "latency_s": _mean([item.get("latency_s") for item in samples], 4),
+        "generated_tokens": (
+            sum(int(item.get("generated_tokens") or 0) for item in samples)
+            if samples
+            else None
+        ),
+    }
+
+
+def _passport_payload(
+    *,
+    timestamp: str,
+    logical_model_id: str,
+    artifact_id: str,
+    artifact_fingerprint: Optional[str],
+    artifact_format: Optional[str],
+    quantization: Optional[str],
+    artifact_size_bytes: Optional[int],
+    runtime: str,
+    runtime_version: Optional[str],
+    adapter: str,
+    hardware: Dict[str, Any],
+    workload: Dict[str, Any],
+    raw_samples: Sequence[Dict[str, Any]],
+    execution_status: str = "success",
+    failure_category: Optional[str] = None,
+    warnings: Sequence[str] = (),
+    benchmark_method: str = BENCHMARK_METHOD_VERSION,
+) -> BenchmarkPassport:
+    samples = canonical_passport_samples(raw_samples)
+    successful = execution_status == "success"
+    measurement = {
+        "execution_status": execution_status,
+        "measured_run_count": len(samples),
+        "raw_samples": samples,
+        "aggregates": aggregate_passport_samples(samples)
+        if successful
+        else {
+            "generation_tps": None,
+            "prompt_evaluation_tps": None,
+            "latency_s": None,
+            "generated_tokens": None,
+        },
+        "warnings": sorted(dict.fromkeys(warnings)),
+        "failure_category": failure_category,
+    }
+    identity = {
+        "tool": PROJECT_SLUG,
+        "llmrig_version": VERSION,
+        "benchmark_method": benchmark_method,
+        "timestamp": timestamp,
+    }
+    model = {
+        "logical_model_id": logical_model_id,
+        "artifact_or_build": artifact_id,
+        "artifact_fingerprint": artifact_fingerprint,
+        "artifact_format": artifact_format,
+        "quantization": quantization,
+        "artifact_size_bytes": artifact_size_bytes,
+    }
+    runtime_data = {
+        "runtime": runtime,
+        "runtime_version": passport_safe_runtime_version(runtime_version),
+        "llmrig_execution_adapter": adapter,
+        "execution_evidence_level": "measured" if successful else "failed",
+    }
+    config = configuration_fingerprint_content(
+        model, runtime_data, hardware, workload, benchmark_method
+    )
+    fingerprint = sha256_identity(config)
+    body = {
+        "schema_version": PASSPORT_SCHEMA_VERSION,
+        "configuration_fingerprint": fingerprint,
+        "identity": identity,
+        "model": model,
+        "runtime": runtime_data,
+        "hardware": hardware,
+        "workload": workload,
+        "measurement": measurement,
+        "evidence": {
+            "measurements": "measured by the named local execution adapter",
+            "configuration": "deterministic from recorded benchmark inputs",
+            "metadata": "verified where present; null means unknown",
+            "unknown_fields": sorted(
+                f"model.{key}" for key, value in model.items() if value is None
+            )
+            + sorted(
+                f"runtime.{key}" for key, value in runtime_data.items() if value is None
+            )
+            + sorted(
+                f"hardware.{key}" for key, value in hardware.items() if value is None
+            ),
+            "independent_attestation": False,
+        },
+        "calibration": {
+            "status": "unavailable",
+            "reason": "no comparable measured peak-memory observation is available",
+        },
+    }
+    return BenchmarkPassport(passport_id=passport_id_for_document(body), **body)
+
+
+def passport_from_benchmark_result(result: Dict[str, Any]) -> BenchmarkPassport:
+    """Create a passport from the existing Ollama benchmark result structure."""
+    spec = resolve_curated_model(str(result.get("model") or ""))
+    artifact = spec.artifact if spec else None
+    workload = {
+        "prompt": SPEED_PROMPT,
+        "requested_context": result.get("context"),
+        "num_predict": 640,
+        "temperature": 0,
+        "seed": 42,
+        "think": False,
+        "warmup_count": 1,
+        "warmup_token_cap": 64,
+        "measured_run_count": len(result.get("throughput_runs") or []),
+        "timeout_s": BENCH_REQUEST_TIMEOUT,
+        "other_generation_settings": {},
+    }
+    ollama = result.get("ollama") or {}
+    running = result.get("running_model") or {}
+    return _passport_payload(
+        timestamp=str(result.get("timestamp") or now_iso()),
+        logical_model_id=artifact.model_id if artifact else str(result.get("model")),
+        artifact_id=str(result.get("model")),
+        artifact_fingerprint=result.get("artifact_fingerprint") or running.get("digest"),
+        artifact_format=artifact.format if artifact else None,
+        quantization=artifact.quantization if artifact else None,
+        artifact_size_bytes=None,
+        runtime="ollama",
+        runtime_version=ollama.get("version"),
+        adapter="ollama-existing-benchmark",
+        hardware=passport_hardware(result.get("hardware") or {}),
+        workload=workload,
+        raw_samples=result.get("throughput_runs") or [],
+        warnings=("performance measurements do not establish model quality",),
+    )
+
+
+def passport_from_race_competitor(
+    result: RaceResult, competitor: RaceCompetitor
+) -> BenchmarkPassport:
+    workload = result.workload.to_dict()
+    workload.update(
+        {
+            "requested_context": workload.pop("context"),
+            "measured_run_count": workload.pop("runs"),
+            "timeout_s": workload.pop("request_timeout_s"),
+            "warmup_count": workload.pop("warmup_runs"),
+            "warmup_token_cap": workload.pop("warmup_num_predict"),
+            "think": False,
+            "other_generation_settings": {},
+        }
+    )
+    return _passport_payload(
+        timestamp=competitor.timestamp,
+        logical_model_id=competitor.logical_model_id,
+        artifact_id=competitor.artifact_id,
+        artifact_fingerprint=competitor.artifact_fingerprint,
+        artifact_format=competitor.artifact_format,
+        quantization=competitor.quantization,
+        artifact_size_bytes=None,
+        runtime=competitor.runtime,
+        runtime_version=competitor.runtime_version,
+        adapter=f"{competitor.runtime}-race-adapter",
+        hardware=passport_hardware(result.hardware),
+        workload=workload,
+        raw_samples=competitor.raw_samples,
+        execution_status=competitor.execution_status,
+        failure_category=competitor.failure,
+        warnings=competitor.warnings,
+        benchmark_method=result.method_version,
+    )
+
+
+def write_passport(passport: BenchmarkPassport, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(passport.to_dict(), indent=2) + "\n", encoding="utf-8")
+
+
+def passport_privacy_issues(value: Any, path: str = "$") -> List[str]:
+    issues: List[str] = []
+    forbidden_keys = {
+        "username", "hostname", "serial_number", "mac_address", "model_store",
+        "home_directory", "local_path", "temporary_path", "api_key",
+        "authorization", "bearer_token", "environment",
+    }
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if str(key).lower() in forbidden_keys:
+                issues.append(f"privacy-sensitive field: {path}.{key}")
+            issues.extend(passport_privacy_issues(item, f"{path}.{key}"))
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            issues.extend(passport_privacy_issues(item, f"{path}[{index}]"))
+    elif isinstance(value, str):
+        home = str(Path.home())
+        if home and home in value:
+            issues.append(f"home path at {path}")
+        if re.search(r"(?:^|\s)(?:/Users/[^/]+|/home/[^/]+|/tmp/|/private/(?:tmp|var)/|[A-Za-z]:\\\\Users\\\\)", value):
+            issues.append(f"local path at {path}")
+        if re.search(r"(?i)(?:bearer\s+|hf_[A-Za-z0-9]{12,}|api[_-]?key\s*[=:])", value):
+            issues.append(f"credential-like value at {path}")
+    return issues
+
+
+def validate_passport(document: Dict[str, Any]) -> List[str]:
+    errors: List[str] = []
+    required = {
+        "schema_version", "passport_id", "configuration_fingerprint", "identity",
+        "model", "runtime", "hardware", "workload", "measurement", "evidence", "calibration",
+    }
+    missing = sorted(required - set(document))
+    if missing:
+        errors.append("missing required fields: " + ", ".join(missing))
+        return errors
+    if document.get("schema_version") != PASSPORT_SCHEMA_VERSION:
+        errors.append("unsupported schema version")
+    for key in ("passport_id", "configuration_fingerprint"):
+        if not isinstance(document.get(key), str) or not re.fullmatch(
+            r"[0-9a-f]{64}", str(document.get(key) or "")
+        ):
+            errors.append(f"{key} must be a SHA-256 hexadecimal digest")
+    for key in ("identity", "model", "runtime", "hardware", "workload", "measurement", "evidence", "calibration"):
+        if not isinstance(document.get(key), dict):
+            errors.append(f"{key} must be an object")
+    if errors:
+        return errors
+    nested_required = {
+        "identity": {"tool", "llmrig_version", "benchmark_method", "timestamp"},
+        "model": {"logical_model_id", "artifact_or_build", "artifact_fingerprint", "artifact_format", "quantization", "artifact_size_bytes"},
+        "runtime": {"runtime", "runtime_version", "llmrig_execution_adapter", "execution_evidence_level"},
+        "hardware": {"os", "architecture", "cpu_or_chip", "ram_gib", "accelerator"},
+        "workload": {"prompt", "requested_context", "num_predict", "temperature", "seed", "think", "warmup_count", "warmup_token_cap", "measured_run_count", "timeout_s", "other_generation_settings"},
+        "measurement": {"execution_status", "measured_run_count", "raw_samples", "aggregates", "warnings", "failure_category"},
+    }
+    for section, keys in nested_required.items():
+        absent = sorted(keys - set(document[section]))
+        if absent:
+            errors.append(f"{section} missing required fields: " + ", ".join(absent))
+    if errors:
+        return errors
+    config = configuration_fingerprint_content(
+        document["model"], document["runtime"], document["hardware"],
+        document["workload"], document["identity"].get("benchmark_method"),
+    )
+    if document.get("configuration_fingerprint") != sha256_identity(config):
+        errors.append("configuration fingerprint mismatch")
+    if document.get("passport_id") != passport_id_for_document(document):
+        errors.append("passport ID mismatch")
+    measurement = document["measurement"]
+    samples = measurement.get("raw_samples")
+    if not isinstance(samples, list):
+        errors.append("measurement.raw_samples must be an array")
+        samples = []
+    invalid_sample = False
+    for index, sample in enumerate(samples):
+        if not isinstance(sample, dict):
+            errors.append(f"measurement sample {index + 1} must be an object")
+            invalid_sample = True
+            continue
+        for key in (
+            "generation_tps", "prompt_evaluation_tps", "latency_s",
+            "runtime_total_duration_s", "generation_duration_s",
+            "prompt_evaluation_duration_s", "load_duration_s",
+        ):
+            value = sample.get(key)
+            if value is not None and (not isinstance(value, (int, float)) or value < 0):
+                errors.append(f"measurement sample {index + 1} has invalid {key}")
+                invalid_sample = True
+        tokens = sample.get("generated_tokens")
+        if tokens is not None and (not isinstance(tokens, int) or tokens < 0):
+            errors.append(f"measurement sample {index + 1} has invalid generated_tokens")
+            invalid_sample = True
+        prompt_tokens = sample.get("prompt_evaluation_tokens")
+        if prompt_tokens is not None and (not isinstance(prompt_tokens, int) or prompt_tokens < 0):
+            errors.append(f"measurement sample {index + 1} has invalid prompt_evaluation_tokens")
+            invalid_sample = True
+    status = measurement.get("execution_status")
+    aggregates = measurement.get("aggregates")
+    if not isinstance(aggregates, dict):
+        errors.append("measurement.aggregates must be an object")
+        aggregates = {}
+    if status == "success":
+        if not samples or measurement.get("measured_run_count") != len(samples):
+            errors.append("successful benchmark requires matching nonzero measured runs")
+        if document["workload"].get("measured_run_count") != len(samples):
+            errors.append("workload measured-run count does not match raw samples")
+        if not invalid_sample:
+            expected = aggregate_passport_samples(samples)
+            if aggregates != expected:
+                errors.append("measurement aggregates do not match raw samples")
+    elif status == "failed":
+        if any(value is not None for value in aggregates.values()):
+            errors.append("failed benchmark cannot contain success aggregates")
+    else:
+        errors.append("execution_status must be success or failed")
+    errors.extend(passport_privacy_issues(document))
+    return errors
+
+
+def compare_passports(left: Dict[str, Any], right: Dict[str, Any]) -> Dict[str, Any]:
+    same_passport = left.get("passport_id") == right.get("passport_id")
+    if left.get("configuration_fingerprint") == right.get("configuration_fingerprint"):
+        return {"same_passport": same_passport, "classification": "exact", "reasons": []}
+    reasons = []
+    if left.get("model", {}).get("logical_model_id") != right.get("model", {}).get("logical_model_id"):
+        reasons.append("different logical model")
+    if left.get("workload") != right.get("workload"):
+        reasons.append("different workload")
+    if reasons:
+        return {"same_passport": same_passport, "classification": "not_comparable", "reasons": reasons}
+    for label, section, key in (
+        ("artifact", "model", "artifact_or_build"), ("quantization", "model", "quantization"),
+        ("artifact format", "model", "artifact_format"),
+        ("runtime", "runtime", "runtime"), ("runtime version", "runtime", "runtime_version"),
+        ("hardware", "hardware", None),
+    ):
+        a = left.get(section) if key is None else left.get(section, {}).get(key)
+        b = right.get(section) if key is None else right.get(section, {}).get(key)
+        if a != b:
+            reasons.append(f"different {label}")
+    return {"same_passport": same_passport, "classification": "comparable_with_warnings", "reasons": reasons}
+
+
 def run_benchmark(
     model: str,
     context: int,
@@ -3379,6 +3836,7 @@ def run_benchmark(
             context,
             64,
             think=False,
+            timeout=BENCH_REQUEST_TIMEOUT,
         )
 
         for index in range(max(1, runs)):
@@ -3391,6 +3849,7 @@ def run_benchmark(
                 context,
                 640,
                 think=False,
+                timeout=BENCH_REQUEST_TIMEOUT,
             )
             metrics = speed_metrics(response)
             metrics["wall_seconds"] = round(time.perf_counter() - started, 4)
@@ -3405,6 +3864,7 @@ def run_benchmark(
                 min(context, 32_768),
                 48,
                 think=False,
+                timeout=BENCH_REQUEST_TIMEOUT,
             )
             text = str(response.get("response") or "").strip()
             passed = bool(check(text))
@@ -3602,6 +4062,7 @@ class OllamaExecutionAdapter:
             timestamp=now_iso(),
             evidence=evidence,
             warnings=("performance measurement does not establish model quality",),
+            raw_samples=tuple(dict(item) for item in timed),
         )
 
 
@@ -4309,6 +4770,11 @@ def command_bench(args: argparse.Namespace) -> int:
     if not models:
         eprint("No installed Qwen model selected or found.")
         return 2
+    passport_path = getattr(args, "passport", None)
+    if passport_path and len(models) != 1:
+        eprint("bench --passport requires exactly one selected model")
+        return 2
+    passport_inventory = installed_ollama_models() if passport_path else []
 
     failures = 0
     results: List[Dict[str, Any]] = []
@@ -4323,6 +4789,15 @@ def command_bench(args: argparse.Namespace) -> int:
                     Path(args.output_dir) if args.output_dir else None,
                 )
             )
+            if passport_path:
+                for installed in passport_inventory:
+                    if model_name_matches(model, installed.get("name", "")):
+                        results[-1]["artifact_fingerprint"] = installed.get("id") or None
+                        break
+                write_passport(
+                    passport_from_benchmark_result(results[-1]), Path(passport_path)
+                )
+                print(f"Passport: {passport_path}")
         except Exception as exc:
             failures += 1
             eprint(f"Benchmark failed for {model}: {exc}")
@@ -4409,6 +4884,23 @@ def print_race_result(result: RaceResult) -> None:
                 print(f"- {label}: inconclusive ({winner.get('reason')})")
 
 
+def export_race_passports(result: RaceResult, output: Path) -> Tuple[Path, ...]:
+    """Export only a completed race; failed comparisons produce no passports."""
+    if result.status != "completed":
+        return ()
+    written = []
+    for competitor in result.competitors:
+        if competitor.execution_status != "success" or not competitor.raw_samples:
+            continue
+        safe_name = re.sub(
+            r"[^A-Za-z0-9._-]+", "_", f"{competitor.runtime}_{competitor.artifact_id}"
+        )
+        path = output / f"{safe_name}.passport.json"
+        write_passport(passport_from_race_competitor(result, competitor), path)
+        written.append(path)
+    return tuple(written)
+
+
 def command_race(args: argparse.Namespace) -> int:
     if args.runs < 1 or args.runs > 5:
         eprint("race --runs must be between 1 and 5")
@@ -4440,11 +4932,37 @@ def command_race(args: argparse.Namespace) -> int:
         race_hardware_summary(profile),
         resolution_reason,
     )
+    passport_dir = getattr(args, "passport_dir", None)
+    if passport_dir:
+        export_race_passports(result, Path(passport_dir))
     if args.json:
         print(json.dumps(result.to_dict(), indent=2))
     else:
         print_race_result(result)
     return race_exit_code(result)
+
+
+def command_passport_verify(args: argparse.Namespace) -> int:
+    """Validate a local passport without network or inference."""
+    try:
+        document = json.loads(Path(args.file).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        print("Passport validation: FAIL")
+        print("- file is not readable valid JSON")
+        return 1
+    if not isinstance(document, dict):
+        print("Passport validation: FAIL")
+        print("- passport root must be an object")
+        return 1
+    errors = validate_passport(document)
+    if errors:
+        print("Passport validation: FAIL")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+    print("Passport validation: PASS")
+    print("The passport is internally valid; this is not independent proof of the measurement.")
+    return 0
 
 
 def command_check(args: argparse.Namespace) -> int:
@@ -4625,6 +5143,10 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--runs", type=int, default=2)
     bench.add_argument("--host", default=DEFAULT_OLLAMA_HOST)
     bench.add_argument("--output-dir")
+    bench.add_argument(
+        "--passport",
+        help="Write a privacy-safe benchmark passport for a single selected model.",
+    )
 
     race = subparsers.add_parser(
         "race", help="Compare at least two locally executable configurations."
@@ -4635,6 +5157,19 @@ def build_parser() -> argparse.ArgumentParser:
     race.add_argument("--runs", type=int, default=2)
     race.add_argument("--num-predict", type=int, default=RACE_NUM_PREDICT)
     race.add_argument("--host", default=DEFAULT_OLLAMA_HOST)
+    race.add_argument(
+        "--passport-dir",
+        help="Write one passport per successfully measured competitor.",
+    )
+
+    passport = subparsers.add_parser(
+        "passport", help="Inspect local benchmark passports without execution or network access."
+    )
+    passport_subparsers = passport.add_subparsers(dest="passport_command")
+    passport_verify = passport_subparsers.add_parser(
+        "verify", help="Verify passport schema, integrity, aggregates, and privacy."
+    )
+    passport_verify.add_argument("file")
 
     check = subparsers.add_parser("check", help="Run project sanity checks without a model download.")
     check.add_argument(
@@ -4672,6 +5207,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return command_bench(args)
     if args.command == "race":
         return command_race(args)
+    if args.command == "passport":
+        if args.passport_command == "verify":
+            return command_passport_verify(args)
+        parser.parse_args(["passport", "--help"])
+        return 0
     if args.command == "check":
         return command_check(args)
 
