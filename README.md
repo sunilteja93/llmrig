@@ -23,7 +23,7 @@ LLMRig helps answer one practical question:
 
 > **Which local LLM can this machine actually run well?**
 
-It inspects hardware, resolves logical models and runnable artifacts, identifies runtime paths, estimates compatibility, measures local execution, compares configurations, and preserves reproducible benchmark evidence. Curated setup and measured execution currently use Ollama.
+It inspects hardware, resolves logical models and runnable artifacts, identifies runtime paths, estimates compatibility, measures local execution, compares configurations, and preserves reproducible benchmark evidence. Curated setup uses Ollama; measured race execution supports Ollama, llama.cpp, and MLX-LM when compatible artifacts are already local.
 
 ### Install
 
@@ -98,9 +98,9 @@ LLMRig is currently **Qwen-first**. The architecture is intended to expand to ad
 - Detects privacy-safe hardware facts across **macOS, Windows, and Linux**.
 - Separates logical models from GGUF, MLX, Safetensors, and curated Ollama artifacts, with generic read-only Hugging Face resolution.
 - Analyzes compatibility with explicit confidence, evidence provenance, practical context, and unknown handling.
-- Detects Ollama, llama.cpp, and MLX-LM runtime capabilities without implying an execution adapter exists.
+- Detects Ollama, llama.cpp, and MLX-LM runtime capabilities while keeping installation and current availability separate from LLMRig adapter support.
 - Recommends and sets up only curated, verified model identifiers through Ollama.
-- Measures local generation, prompt evaluation, latency, residency, and lightweight correctness through the Ollama benchmark adapter.
+- Measures local race generation, prompt evaluation, and normalized inference latency through Ollama, llama.cpp, and MLX-LM adapters. The full `bench` workflow, residency measurement, and correctness smoke test remain Ollama-specific.
 - Races at least two unique executable configurations with metric-specific, non-composite results.
 - Exports privacy-safe benchmark passports containing raw per-run evidence and deterministic identities.
 - Verifies passport structure, integrity, aggregates, and privacy entirely offline without inference.
@@ -109,7 +109,7 @@ LLMRig is currently **Qwen-first**. The architecture is intended to expand to ad
 
 LLMRig remains **Qwen-first**. Its curated catalog supports practical recommendations and setup, while generic Hugging Face resolution inspects repository metadata without downloading model weights. Automatic installation remains limited to manually verified curated identifiers.
 
-Ollama is currently LLMRig's implemented setup, execution, and benchmark backend. LLMRig can detect and reason about llama.cpp and MLX-LM capabilities, but execution adapters for those runtimes are not yet implemented.
+Ollama remains LLMRig's only setup/install backend. Race execution and benchmarking also support locally installed llama.cpp and MLX-LM runtimes. Those native adapters require explicit paths to already-local GGUF files or MLX model directories; LLMRig does not download native artifacts during a race.
 
 The project name is intentionally broader than Qwen because the long-term direction is to support additional model families and runtimes without changing the user experience:
 
@@ -123,7 +123,8 @@ If you want to add support for another model family, runtime, GPU vendor, or ope
 
 - Python **3.9+**
 - macOS, Windows, or Linux
-- Ollama for automatic model setup and benchmarking
+- Ollama for automatic model setup and the full benchmark workflow
+- Optional llama.cpp or MLX-LM installations for native race execution
 - Internet access for live discovery and model downloads
 - No third-party Python runtime dependencies
 
@@ -185,17 +186,46 @@ llmrig race qwen3.8:27b-mlx
 llmrig race qwen3.8:27b-mlx --json
 ```
 
+Add an already-local MLX-LM artifact explicitly:
+
+```bash
+llmrig race <model> \
+  --local-artifact mlx-lm=/path/to/local-mlx-model
+```
+
+Or add a local GGUF for llama.cpp:
+
+```bash
+llmrig race <model> \
+  --local-artifact llama.cpp=/path/to/model.gguf
+```
+
+When the equivalent Ollama build is already installed, both native artifacts can be
+added for a three-way race:
+
+```bash
+llmrig race <model> \
+  --local-artifact mlx-lm=/path/to/local-mlx-model \
+  --local-artifact llama.cpp=/path/to/model.gguf
+```
+
 `race` measures only configurations that are already local, currently available,
 and backed by an LLMRig execution/benchmark adapter. It never installs runtimes or
 downloads artifacts. At least two executable configurations are required; otherwise
 the command reports the eligible and blocked alternatives without running a benchmark.
-Runtime race execution currently supports Ollama. llama.cpp and MLX-LM are detected
-as capability providers but do not yet have LLMRig execution adapters.
+At most one explicit artifact may be supplied for each native runtime. A GGUF target
+must be a non-empty local file; an MLX-LM target must contain an immediate `config.json`
+and at least one immediate non-empty `.safetensors` or `.npz` weights file. These are
+structural checks, not proof that the runtime can load the artifact.
+The local-artifact association is user-supplied evidence, not independent proof that
+differently packaged artifacts contain identical model weights or provide identical
+quality. LLMRig passes only explicit local paths to native runtimes and never invokes
+remote model identifiers for native race execution.
 
 Exit `0` means at least two competitors were measured successfully. Exit `1` means
 an attempted execution failed and invalidated the comparison. Exit `2` means the race
 is unavailable or the model could not be resolved. Winners are reported separately
-for measured generation throughput, prompt-evaluation throughput, and latency; there
+for measured generation throughput, prompt-evaluation throughput, and normalized inference latency; there
 is no composite score or model-quality claim. Results within 5% are treated as
 inconclusive, and at least two timed runs per competitor are required for a winner.
 
@@ -295,7 +325,7 @@ LLMRig deduplicates installed aliases that resolve to the same Ollama model ID.
 ### Benchmark passports
 
 A benchmark passport is a versioned, privacy-safe JSON record of one measured
-execution configuration. It records the exact model/build, runtime, safe hardware
+execution configuration. It records the public model/build identifier, runtime, safe hardware
 summary, applied workload, individual timed samples, reproducible aggregates, and
 evidence provenance. Use `bench --passport FILE` for a single model, or
 `race --passport-dir DIR` to export each successfully measured race competitor.
@@ -314,8 +344,9 @@ benchmark certification.
 
 `passport_id` is the SHA-256 hash of canonical passport content with `passport_id`
 itself excluded. It identifies the exact record, including its timestamp and
-measurements. `configuration_fingerprint` hashes the logical model, exact
-artifact/build, artifact digest, format, quantization, runtime and version, execution
+measurements. `configuration_fingerprint` hashes the logical model, public
+artifact/build identifier, artifact digest when genuinely available, format,
+quantization, runtime and version, execution
 adapter, privacy-safe hardware facts, exact workload and generation settings, and
 benchmark method version. It excludes the passport ID, timestamp, measurements,
 aggregates, run-only warnings, and output path. The LLMRig tool version is record
@@ -327,6 +358,9 @@ their passport IDs and measured results may differ. `comparable_with_warnings` m
 the logical model and workload match but artifact, format, quantization, runtime,
 runtime version, or hardware differs. `not_comparable` means the logical model or
 workload—including context—differs. These classifications do not rank results.
+For user-supplied native targets, the public artifact identifier is path-independent
+and intentionally does not attest content identity. Matching native configuration
+fingerprints therefore do not prove that two user-supplied files contain the same weights.
 
 Race passports are exported only when the overall race completes successfully. If
 any intended competitor fails, the race remains failed and `--passport-dir` writes

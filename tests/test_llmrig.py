@@ -1,8 +1,11 @@
 import contextlib
+import copy
+import dataclasses
 import importlib.util
 import io
 import json
 import os
+import pickle
 import subprocess
 import sys
 import tempfile
@@ -731,6 +734,8 @@ class LLMRigTests(unittest.TestCase):
             capability = provider.capability(self.mac_profile())
         self.assertFalse(capability.installed)
         self.assertFalse(capability.available)
+        self.assertTrue(capability.llmrig_execution_supported)
+        self.assertTrue(capability.llmrig_benchmark_supported)
 
     def test_llama_cpp_capability_detects_versioned_executable(self):
         process = mock.Mock(returncode=0, stdout="llama.cpp version 999\n", stderr="")
@@ -744,8 +749,8 @@ class LLMRigTests(unittest.TestCase):
         self.assertTrue(capability.available)
         self.assertEqual(capability.supported_artifact_formats, ("GGUF",))
         self.assertTrue(capability.runtime_execution_capable)
-        self.assertFalse(capability.llmrig_execution_supported)
-        self.assertFalse(capability.llmrig_benchmark_supported)
+        self.assertTrue(capability.llmrig_execution_supported)
+        self.assertTrue(capability.llmrig_benchmark_supported)
 
     def test_llama_cpp_capability_reports_unavailable_without_executable(self):
         with mock.patch.object(llmrig.shutil, "which", return_value=None):
@@ -754,6 +759,8 @@ class LLMRigTests(unittest.TestCase):
             )
         self.assertFalse(capability.installed)
         self.assertFalse(capability.available)
+        self.assertTrue(capability.llmrig_execution_supported)
+        self.assertTrue(capability.llmrig_benchmark_supported)
 
     def test_runtime_command_on_path_without_successful_probe_is_unavailable(self):
         process = mock.Mock(returncode=1, stdout="", stderr="probe failed")
@@ -797,8 +804,8 @@ class LLMRigTests(unittest.TestCase):
         self.assertFalse(linux.available)
         self.assertIn("MLX", mac.supported_artifact_formats)
         self.assertTrue(mac.runtime_execution_capable)
-        self.assertFalse(mac.llmrig_execution_supported)
-        self.assertFalse(mac.llmrig_benchmark_supported)
+        self.assertTrue(mac.llmrig_execution_supported)
+        self.assertTrue(mac.llmrig_benchmark_supported)
 
     def test_mlx_capability_reports_uninstalled(self):
         provider = llmrig.MlxRuntimeProvider()
@@ -815,6 +822,8 @@ class LLMRigTests(unittest.TestCase):
             capability = provider.capability({**self.mac_profile(), "arch": "arm64"})
         self.assertFalse(capability.installed)
         self.assertFalse(capability.available)
+        self.assertTrue(capability.llmrig_execution_supported)
+        self.assertTrue(capability.llmrig_benchmark_supported)
 
     def test_gguf_with_available_llama_cpp_produces_practical_candidate(self):
         capability = self.runtime_capability("llama.cpp", "GGUF")
@@ -1736,6 +1745,587 @@ class LLMRigTests(unittest.TestCase):
             {"os": "Darwin", "architecture": "arm64", "cpu_or_chip": "Apple Test Chip", "ram_gib": 48.0, "accelerator": "Metal test accelerator"},
         )
         self.assertEqual(llmrig.validate_passport(document), [])
+
+    def native_capability(self, runtime, artifact_format, available=True):
+        return llmrig.replace(
+            self.runtime_capability(runtime, artifact_format, True, available),
+            llmrig_execution_supported=True,
+            llmrig_benchmark_supported=True,
+        )
+
+    def native_compatibility(self, can_run=True, model_id="org/model", reason=None):
+        if can_run is True:
+            status = llmrig.CompatibilityStatus.GOOD
+            confidence = llmrig.Confidence.HIGH
+            evidence = (llmrig.RecommendationEvidence("verified", "test", "static fit is known"),)
+        elif can_run is False:
+            status = llmrig.CompatibilityStatus.TOO_LARGE
+            confidence = llmrig.Confidence.HIGH
+            evidence = (llmrig.RecommendationEvidence("verified", "test", "static fit is ruled out"),)
+        else:
+            status = llmrig.CompatibilityStatus.UNKNOWN
+            confidence = llmrig.Confidence.UNKNOWN
+            evidence = ()
+        return llmrig.CompatibilityResult(
+            model_id=model_id, artifact_id=None, runtime=None, status=status,
+            confidence=confidence, evidence=evidence, reason=reason,
+            can_run=can_run,
+        )
+
+    def write_mlx_artifact(self, root):
+        root.mkdir()
+        (root / "config.json").write_text("{}")
+        (root / "weights.safetensors").write_bytes(b"weights")
+
+    def test_local_artifact_parser_splits_only_first_equals(self):
+        parser = llmrig.build_parser()
+        args = parser.parse_args([
+            "race", "org/model", "--local-artifact", "llama.cpp=/tmp/a=b.gguf",
+        ])
+        self.assertEqual(
+            llmrig.parse_local_artifact_values(args.local_artifact),
+            (("llama.cpp", "/tmp/a=b.gguf"),),
+        )
+
+    def test_local_artifact_parser_rejects_bad_and_whitespace_only_values(self):
+        for value in ("bad", "vllm=/tmp/a", "mlx-lm=", "mlx-lm=   "):
+            with self.assertRaises(ValueError):
+                llmrig.parse_local_artifact_values((value,))
+
+    def test_local_artifact_parser_rejects_duplicate_runtime_privately(self):
+        private = "/Users/private-user/Secret Models/model.gguf"
+        with self.assertRaises(ValueError) as caught:
+            llmrig.parse_local_artifact_values((f"llama.cpp={private}", "llama.cpp=/other.gguf"))
+        self.assertNotIn(private, str(caught.exception))
+        self.assertNotIn("other.gguf", str(caught.exception))
+
+    def test_local_artifact_parser_rejects_duplicate_mlx_runtime_privately(self):
+        private = "/Users/private-user/Secret Models/model-a"
+        with self.assertRaises(ValueError) as caught:
+            llmrig.parse_local_artifact_values((f"mlx-lm={private}", "mlx-lm=/other/model-b"))
+        self.assertNotIn(private, str(caught.exception))
+        self.assertNotIn("model-b", str(caught.exception))
+
+    def test_invalid_local_artifact_shapes_use_privacy_safe_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "Secret Models private-user"
+            root.mkdir()
+            wrong = root / "not-a-model.txt"
+            wrong.write_text("not weights")
+            capabilities = (
+                self.native_capability("llama.cpp", "GGUF"),
+                self.native_capability("mlx-lm", "MLX"),
+            )
+            adapters = (mock.Mock(runtime="llama.cpp"), mock.Mock(runtime="mlx-lm"))
+            for value in (
+                f"llama.cpp={wrong}", f"llama.cpp={root / 'missing.gguf'}",
+                f"mlx-lm={wrong}",
+            ):
+                with mock.patch.object(llmrig, "runtime_capabilities", return_value=capabilities):
+                    with self.assertRaises(ValueError) as caught:
+                        llmrig.local_execution_targets("logical/model", (value,), self.mac_profile(), adapters)
+                self.assertNotIn("private-user", str(caught.exception))
+                self.assertNotIn(str(root), str(caught.exception))
+
+    def test_local_gguf_requires_nonempty_regular_file_and_accepts_uppercase(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            empty = root / "empty.gguf"
+            empty.touch()
+            with self.assertRaises(ValueError):
+                llmrig.validated_local_locator("llama.cpp", str(empty))
+            model = root / "Mødel.GGUF"
+            model.write_bytes(b"not attested, but nonempty")
+            self.assertEqual(llmrig.validated_local_locator("llama.cpp", str(model)), str(model.resolve()))
+
+    def test_local_mlx_requires_config_and_immediate_nonempty_weights(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "mlx model"
+            root.mkdir()
+            (root / "config.json").write_text("{}")
+            with self.assertRaises(ValueError):
+                llmrig.validated_local_locator("mlx-lm", str(root))
+            (root / "weights.npz").write_bytes(b"weights")
+            self.assertEqual(llmrig.validated_local_locator("mlx-lm", str(root)), str(root.resolve()))
+
+    def test_local_artifact_paths_support_spaces_unicode_and_equals(self):
+        with tempfile.TemporaryDirectory() as directory:
+            model = Path(directory) / "Mødel = one.GGUF"
+            model.write_bytes(b"weights")
+            parsed = llmrig.parse_local_artifact_values((f"llama.cpp={model}",))
+            self.assertEqual(llmrig.validated_local_locator(*parsed[0]), str(model.resolve()))
+
+    def test_broken_local_artifact_symlink_fails_without_destination_leak(self):
+        with tempfile.TemporaryDirectory() as directory:
+            link = Path(directory) / "model.gguf"
+            destination = Path(directory) / "private-user" / "missing.gguf"
+            try:
+                link.symlink_to(destination)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks are unavailable")
+            with self.assertRaises(ValueError) as caught:
+                llmrig.validated_local_locator("llama.cpp", str(link))
+            self.assertNotIn("private-user", str(caught.exception))
+
+    def test_valid_local_artifact_symlink_destination_stays_private(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            destination = root / "private-user" / "Secret Models" / "model.gguf"
+            destination.parent.mkdir(parents=True)
+            destination.write_bytes(b"weights")
+            link = root / "public-model.gguf"
+            try:
+                link.symlink_to(destination)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks are unavailable")
+            capability = self.native_capability("llama.cpp", "GGUF")
+            adapter = mock.Mock(runtime="llama.cpp")
+            with mock.patch.object(llmrig, "runtime_capabilities", return_value=(capability,)):
+                target = llmrig.local_execution_targets(
+                    "org/model", (f"llama.cpp={link}",), self.mac_profile(),
+                    (adapter,), self.native_compatibility(True),
+                )[0]
+            public = json.dumps(target.configuration.to_dict()) + repr(target)
+            self.assertNotIn(str(destination), public)
+            self.assertNotIn("private-user", public)
+
+    def test_relative_and_absolute_local_paths_have_same_public_identity(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as directory:
+            model = Path(directory) / "model.gguf"
+            model.write_bytes(b"weights")
+            relative = os.path.relpath(model, Path.cwd())
+            self.assertEqual(
+                llmrig.validated_local_locator("llama.cpp", relative),
+                llmrig.validated_local_locator("llama.cpp", str(model.resolve())),
+            )
+        self.assertEqual(llmrig.local_artifact_id("llama.cpp"), "local:llama.cpp:user-supplied")
+
+    def test_execution_target_is_not_a_dataclass_and_repr_is_private(self):
+        private = "/Users/private-user/Secret Models/model.gguf"
+        target = llmrig.ExecutionTarget(self.race_configuration(), private)
+        self.assertFalse(dataclasses.is_dataclass(target))
+        with self.assertRaises(TypeError):
+            dataclasses.asdict(target)
+        self.assertNotIn(private, repr(target))
+        self.assertFalse(hasattr(target, "to_dict"))
+
+    def test_execution_target_rejects_pickle_and_copy_privately(self):
+        private = "/Users/private-user/Secret Models/model.gguf"
+        target = llmrig.ExecutionTarget(self.race_configuration(), private)
+        operations = [
+            *(lambda protocol=protocol: pickle.dumps(target, protocol=protocol)
+              for protocol in range(pickle.HIGHEST_PROTOCOL + 1)),
+            lambda: copy.copy(target),
+            lambda: copy.deepcopy(target),
+        ]
+        for operation in operations:
+            with self.subTest(operation=operation), self.assertRaises(TypeError) as caught:
+                operation()
+            self.assertNotIn(private, str(caught.exception))
+            self.assertNotIn("private-user", str(caught.exception))
+        self.assertNotIn(private, repr(target))
+        with self.assertRaises(TypeError):
+            dataclasses.asdict(target)
+        with self.assertRaises(TypeError):
+            vars(target)
+
+    def test_moved_local_path_does_not_change_public_or_passport_identity(self):
+        config_a = llmrig.replace(
+            self.race_configuration(runtime="llama.cpp", artifact=llmrig.local_artifact_id("llama.cpp")),
+            quantization=None,
+        )
+        config_b = llmrig.replace(config_a)
+        target_a = llmrig.ExecutionTarget(config_a, "/private/location-a/model.gguf")
+        target_b = llmrig.ExecutionTarget(config_b, "/private/location-b/model.gguf")
+        sample = {"generation_tps": 20.0, "prompt_tps": 100.0, "wall_seconds": 2.1,
+                  "total_duration_s": 2.1, "eval_count": 40, "eval_duration_s": 2.0,
+                  "prompt_eval_count": 10, "prompt_eval_duration_s": 0.1}
+        competitor_a = llmrig.native_race_competitor(config_a, (sample, sample), self.race_workload())
+        competitor_b = llmrig.replace(competitor_a)
+        result = llmrig.RaceResult("completed", "logical/model", None, llmrig.RACE_METHOD_VERSION,
+                                   "fixed", self.race_workload(), {}, (config_a,), (), (competitor_a,))
+        passport_a = llmrig.passport_from_race_competitor(result, competitor_a)
+        passport_b = llmrig.passport_from_race_competitor(result, competitor_b)
+        self.assertEqual(target_a.configuration, target_b.configuration)
+        self.assertIsNone(target_a.configuration.artifact_fingerprint)
+        self.assertEqual(passport_a.configuration_fingerprint, passport_b.configuration_fingerprint)
+        self.assertNotIn("private", json.dumps(passport_a.to_dict()))
+
+    def test_explicit_native_targets_become_eligible_only_with_runtime_support(self):
+        with tempfile.TemporaryDirectory() as directory:
+            mlx_dir = Path(directory) / "mlx"
+            self.write_mlx_artifact(mlx_dir)
+            gguf = Path(directory) / "model.gguf"
+            gguf.write_bytes(b"local")
+            capabilities = (
+                self.native_capability("mlx-lm", "MLX"),
+                self.native_capability("llama.cpp", "GGUF"),
+            )
+            adapters = (mock.Mock(runtime="mlx-lm"), mock.Mock(runtime="llama.cpp"))
+            compatibility = self.native_compatibility(True)
+            with mock.patch.object(llmrig, "runtime_capabilities", return_value=capabilities):
+                targets = llmrig.local_execution_targets(
+                    "org/model", (f"mlx-lm={mlx_dir}", f"llama.cpp={gguf}"),
+                    self.mac_profile(), adapters, compatibility,
+                )
+            self.assertTrue(all(target.configuration.eligible for target in targets))
+            self.assertEqual({target.configuration.artifact_format for target in targets}, {"MLX", "GGUF"})
+
+    def test_generic_native_positive_static_compatibility_is_eligible(self):
+        capability = self.native_capability("llama.cpp", "GGUF")
+        with mock.patch.object(llmrig, "runtime_capabilities", return_value=(capability,)):
+            compatibility = llmrig.assess_generic_runtime_compatibility(
+                self.generic_resolution(size_bytes=4_000_000_000), self.mac_profile()
+            )
+        self._assert_native_static_eligibility(compatibility, True)
+
+    def test_generic_native_negative_static_compatibility_is_blocked(self):
+        capability = self.native_capability("llama.cpp", "GGUF")
+        with mock.patch.object(llmrig, "runtime_capabilities", return_value=(capability,)):
+            compatibility = llmrig.assess_generic_runtime_compatibility(
+                self.generic_resolution(size_bytes=100_000_000_000), self.mac_profile()
+            )
+        target = self._assert_native_static_eligibility(
+            compatibility, False
+        )
+        self.assertTrue(target.configuration.blockers)
+
+    def test_generic_native_unknown_static_compatibility_is_blocked(self):
+        capability = self.native_capability("llama.cpp", "GGUF")
+        with mock.patch.object(llmrig, "runtime_capabilities", return_value=(capability,)):
+            compatibility = llmrig.assess_generic_runtime_compatibility(
+                self.generic_resolution(size_bytes=None), self.mac_profile()
+            )
+        target = self._assert_native_static_eligibility(compatibility, False)
+        self.assertIn("static machine compatibility is unresolved", target.configuration.blockers)
+
+    def test_unresolved_identifier_cannot_become_native_executable(self):
+        target = self._assert_native_static_eligibility(
+            self.native_compatibility(None, model_id="missing/model"), False
+        )
+        self.assertFalse(target.configuration.eligible)
+
+    def _assert_native_static_eligibility(self, compatibility, expected):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        gguf = Path(temporary.name) / "model.gguf"
+        gguf.write_bytes(b"weights")
+        capability = self.native_capability("llama.cpp", "GGUF")
+        adapter = mock.Mock(runtime="llama.cpp")
+        with mock.patch.object(llmrig, "runtime_capabilities", return_value=(capability,)):
+            target = llmrig.local_execution_targets(
+                compatibility.model_id, (f"llama.cpp={gguf}",), self.mac_profile(),
+                (adapter,), compatibility,
+            )[0]
+        self.assertIs(target.configuration.eligible, expected)
+        return target
+
+    def test_generic_hf_without_local_artifact_remains_nonexecutable(self):
+        compatibility = self.native_compatibility(True)
+        _, eligible, ineligible, _ = llmrig.race_configurations(
+            "org/model", self.mac_profile(), (), compatibility
+        )
+        self.assertEqual(eligible, ())
+        self.assertTrue(all(not item.eligible for item in ineligible))
+
+    def test_llama_parser_accepts_contemporary_ms_per_token_form(self):
+        metrics = llmrig.parse_llama_cpp_metrics(
+            "llama_perf_context_print: prompt eval time = 3269.06 ms / 7 tokens (467.01 ms per token, 2.14 tokens per second)\n"
+            "llama_perf_context_print: eval time = 1563.53 ms / 49 runs (31.91 ms per token, 31.34 tokens per second)"
+        )
+        self.assertEqual(metrics["prompt_eval_count"], 7)
+        self.assertEqual(metrics["eval_count"], 49)
+        self.assertEqual(metrics["wall_seconds"], 4.8326)
+
+    def test_llama_parser_accepts_historical_prefix(self):
+        metrics = llmrig.parse_llama_cpp_metrics(
+            "llama_print_timings: prompt eval time = 100 ms / 10 tokens (10 ms per token, 100 tokens per second)\n"
+            "llama_print_timings: eval time = 2000 ms / 40 runs (50 ms per token, 20 tokens per second)"
+        )
+        self.assertEqual(metrics["wall_seconds"], 2.1)
+
+    def test_llama_parser_accepts_scientific_notation_and_ansi(self):
+        metrics = llmrig.parse_llama_cpp_metrics(
+            "\x1b[32mllama_perf_context_print: prompt eval time = 1e2 ms / 10 tokens (1e1 ms per token, 1e2 tokens per second)\x1b[0m\n"
+            "\x1b[32mllama_perf_context_print: eval time = 2e3 ms / 40 runs (5e1 ms per token, 2e1 tokens per second)\x1b[0m"
+        )
+        self.assertEqual(metrics["wall_seconds"], 2.1)
+
+    def test_llama_parser_rejects_partial_timing_block(self):
+        with self.assertRaises(ValueError):
+            llmrig.parse_llama_cpp_metrics(
+                "llama_perf_context_print: prompt eval time = 100 ms / 10 tokens (100 tokens per second)"
+            )
+
+    def test_llama_parser_rejects_duplicate_timing_blocks(self):
+        block = (
+            "llama_perf_context_print: prompt eval time = 100 ms / 10 tokens (100 tokens per second)\n"
+            "llama_perf_context_print: eval time = 2000 ms / 40 runs (20 tokens per second)"
+        )
+        with self.assertRaises(ValueError):
+            llmrig.parse_llama_cpp_metrics(block + "\n" + block)
+
+    def test_llama_adapter_uses_stderr_metrics_not_generated_stdout(self):
+        output = self.llama_metrics_output()
+        competitor, _ = self.run_native_adapter(
+            llmrig.LlamaCppExecutionAdapter(), output="generated model text", stderr=output
+        )
+        self.assertEqual(competitor.total_latency_s, 2.1)
+
+    def test_llama_adapter_ignores_convincing_fake_stdout_when_stderr_is_valid(self):
+        fake = self.llama_metrics_output(prompt_ms="1", eval_ms="1", prompt_tps="999", eval_tps="999")
+        real = self.llama_metrics_output()
+        competitor, _ = self.run_native_adapter(
+            llmrig.LlamaCppExecutionAdapter(), output=fake, stderr=real
+        )
+        self.assertEqual(competitor.total_latency_s, 2.1)
+        self.assertEqual(competitor.generation_tps, 20.0)
+
+    def test_llama_adapter_rejects_fake_stdout_without_stderr_timing(self):
+        fake = self.llama_metrics_output(prompt_ms="1", eval_ms="1", prompt_tps="999", eval_tps="999")
+        with self.assertRaises(RuntimeError):
+            self.run_native_adapter(
+                llmrig.LlamaCppExecutionAdapter(), output=fake, stderr="diagnostic only"
+            )
+
+    def test_llama_adapter_rejects_stdout_only_valid_timing(self):
+        with self.assertRaises(RuntimeError):
+            self.run_native_adapter(
+                llmrig.LlamaCppExecutionAdapter(), output=self.llama_metrics_output(), stderr=""
+            )
+
+    def test_llama_adapter_rejects_duplicate_stderr_blocks(self):
+        block = self.llama_metrics_output()
+        with self.assertRaises(RuntimeError):
+            self.run_native_adapter(
+                llmrig.LlamaCppExecutionAdapter(), output="generated", stderr=block + "\n" + block
+            )
+
+    def test_llama_adapter_rejects_mixed_stderr_prefix_families(self):
+        mixed = (
+            "llama_perf_context_print: prompt eval time = 100 ms / 10 tokens (10 ms per token, 100 tokens per second)\n"
+            "llama_print_timings: eval time = 2000 ms / 40 runs (50 ms per token, 20 tokens per second)"
+        )
+        with self.assertRaises(RuntimeError):
+            self.run_native_adapter(
+                llmrig.LlamaCppExecutionAdapter(), output="generated", stderr=mixed
+            )
+
+    def llama_metrics_output(self, prompt_ms="100", eval_ms="2000", prompt_tps="100", eval_tps="20"):
+        return (
+            f"llama_perf_context_print: prompt eval time = {prompt_ms} ms / 10 tokens (10 ms per token, {prompt_tps} tokens per second)\n"
+            f"llama_perf_context_print: eval time = {eval_ms} ms / 40 runs (50 ms per token, {eval_tps} tokens per second)"
+        )
+
+    def test_llama_parser_rejects_zero_metrics(self):
+        cases = (
+            self.llama_metrics_output(prompt_ms="0"),
+            self.llama_metrics_output(eval_ms="0"),
+            self.llama_metrics_output(prompt_tps="0"),
+            self.llama_metrics_output(eval_tps="0"),
+            self.llama_metrics_output().replace("/ 10 tokens", "/ 0 tokens"),
+            self.llama_metrics_output().replace("/ 40 runs", "/ 0 runs"),
+        )
+        for value in cases:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                llmrig.parse_llama_cpp_metrics(value)
+
+    def test_llama_parser_rejects_negative_metrics(self):
+        for value in (
+            self.llama_metrics_output(prompt_ms="-1"),
+            self.llama_metrics_output(eval_tps="-1"),
+        ):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                llmrig.parse_llama_cpp_metrics(value)
+
+    def test_llama_parser_rejects_nonfinite_metrics(self):
+        for value in (
+            self.llama_metrics_output(prompt_ms="NaN"),
+            self.llama_metrics_output(eval_tps="inf"),
+            self.llama_metrics_output(prompt_tps="1e999"),
+        ):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                llmrig.parse_llama_cpp_metrics(value)
+
+    def mlx_metrics_output(self, prefix="generated model text", prompt="10", generation="40", prompt_rate="100", generation_rate="20"):
+        return (f"==========\n{prefix}\n==========\nPrompt: {prompt} tokens, {prompt_rate} tokens-per-sec\n"
+                f"Generation: {generation} tokens, {generation_rate} tokens-per-sec\nPeak memory: 9 GB")
+
+    def test_mlx_parser_ignores_generated_metric_spoof_before_final_separator(self):
+        fake = "Prompt: 999999 tokens, 999999 tokens-per-sec\nGeneration: 999999 tokens, 999999 tokens-per-sec"
+        metrics = llmrig.parse_mlx_metrics(self.mlx_metrics_output(fake))
+        self.assertEqual(metrics["prompt_eval_count"], 10)
+        self.assertEqual(metrics["eval_count"], 40)
+
+    def test_mlx_parser_rejects_repeated_suffix_metrics(self):
+        with self.assertRaises(ValueError):
+            llmrig.parse_mlx_metrics(self.mlx_metrics_output() + "\nPrompt: 1 tokens, 1 tokens-per-sec")
+
+    def test_mlx_parser_rejects_repeated_suffix_generation_metrics(self):
+        with self.assertRaises(ValueError):
+            llmrig.parse_mlx_metrics(
+                self.mlx_metrics_output() + "\nGeneration: 1 tokens, 1 tokens-per-sec"
+            )
+
+    def test_mlx_parser_rejects_missing_separator_prompt_or_generation(self):
+        cases = (
+            "Prompt: 10 tokens, 100 tokens-per-sec\nGeneration: 40 tokens, 20 tokens-per-sec",
+            "==========\nGeneration: 40 tokens, 20 tokens-per-sec",
+            "==========\nPrompt: 10 tokens, 100 tokens-per-sec",
+        )
+        for value in cases:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                llmrig.parse_mlx_metrics(value)
+
+    def test_mlx_parser_rejects_zero_rates(self):
+        with self.assertRaises(ValueError):
+            llmrig.parse_mlx_metrics(self.mlx_metrics_output(prompt_rate="0"))
+
+    def test_mlx_parser_rejects_negative_metrics(self):
+        for value in (
+            self.mlx_metrics_output(prompt="-1"),
+            self.mlx_metrics_output(generation_rate="-1"),
+        ):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                llmrig.parse_mlx_metrics(value)
+
+    def test_mlx_parser_rejects_nonfinite_metrics(self):
+        for value in (
+            self.mlx_metrics_output(prompt_rate="NaN"),
+            self.mlx_metrics_output(generation_rate="inf"),
+            self.mlx_metrics_output(prompt_rate="1e999"),
+        ):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                llmrig.parse_mlx_metrics(value)
+
+    def test_mlx_parser_accepts_scientific_notation(self):
+        metrics = llmrig.parse_mlx_metrics(self.mlx_metrics_output(prompt_rate="1e2", generation_rate="2e1"))
+        self.assertEqual(metrics["wall_seconds"], 2.1)
+
+    def test_mlx_adapter_ignores_fake_stderr_metrics(self):
+        fake = "==========\nPrompt: 999 tokens, 999 tokens-per-sec\nGeneration: 999 tokens, 999 tokens-per-sec"
+        competitor, _ = self.run_native_adapter(
+            llmrig.MlxExecutionAdapter(), output=self.mlx_metrics_output(), stderr=fake
+        )
+        self.assertEqual(competitor.generated_tokens, 40)
+
+    def run_native_adapter(self, adapter, output, stderr=""):
+        workload = llmrig.RaceWorkload("prompt; $(unsafe)", runs=1, warmup_runs=0)
+        config = self.race_configuration(runtime=adapter.runtime, artifact=llmrig.local_artifact_id(adapter.runtime))
+        config = llmrig.replace(config, artifact_format="MLX" if adapter.runtime == "mlx-lm" else "GGUF")
+        private = "/Users/private-user/Secret Models/model"
+        target = llmrig.ExecutionTarget(config, private)
+        process = mock.Mock(returncode=0, stdout=output, stderr=stderr)
+        runtime = llmrig.LLAMA_CPP_RUNTIME if adapter.runtime == "llama.cpp" else llmrig.MLX_RUNTIME
+        with mock.patch.object(llmrig, "run_cmd", return_value=process) as run, \
+             mock.patch.object(llmrig.shutil, "which", return_value="llama-cli" if adapter.runtime == "llama.cpp" else "mlx_lm.generate"), \
+             mock.patch.object(runtime, "is_available", return_value=True):
+            competitor = adapter.benchmark(target, workload)
+        return competitor, run.call_args.args[0]
+
+    def test_native_adapters_pass_private_paths_as_argument_lists(self):
+        private = "/Users/private-user/Secret Models/model"
+        for adapter, output, stderr in (
+            (llmrig.LlamaCppExecutionAdapter(), "generated", self.llama_metrics_output()),
+            (llmrig.MlxExecutionAdapter(), self.mlx_metrics_output(), ""),
+        ):
+            competitor, command = self.run_native_adapter(adapter, output, stderr)
+            self.assertIn(private, command)
+            self.assertIn("prompt; $(unsafe)", command)
+            self.assertNotIn(private, json.dumps(competitor.to_dict()))
+
+    def test_native_path_beginning_with_dash_remains_one_model_argument(self):
+        private = "-x.gguf"
+        adapter = llmrig.LlamaCppExecutionAdapter()
+        workload = llmrig.RaceWorkload("prompt", runs=1, warmup_runs=0)
+        target = llmrig.ExecutionTarget(
+            self.race_configuration(runtime="llama.cpp", artifact=llmrig.local_artifact_id("llama.cpp")),
+            private,
+        )
+        process = mock.Mock(returncode=0, stdout="", stderr=self.llama_metrics_output())
+        with mock.patch.object(llmrig, "run_cmd", return_value=process) as run, \
+             mock.patch.object(llmrig, "llama_cpp_executable", return_value="llama-cli"), \
+             mock.patch.object(llmrig.LLAMA_CPP_RUNTIME, "is_available", return_value=True):
+            adapter.benchmark(target, workload)
+        command = run.call_args.args[0]
+        self.assertEqual(command[command.index("--model") + 1], private)
+
+    def test_native_path_never_reaches_result_human_output_or_passport(self):
+        private = "/Users/private-user/Secret Models/model.gguf"
+        configuration = self.race_configuration(runtime="llama.cpp", artifact=llmrig.local_artifact_id("llama.cpp"))
+        sample = {"generation_tps": 20.0, "prompt_tps": 100.0, "wall_seconds": 2.1, "total_duration_s": 2.1, "eval_count": 40, "eval_duration_s": 2.0, "prompt_eval_count": 10, "prompt_eval_duration_s": 0.1}
+        competitor = llmrig.native_race_competitor(configuration, (sample, sample), self.race_workload())
+        result = llmrig.RaceResult("completed", "logical/model", None, llmrig.RACE_METHOD_VERSION, "fixed", self.race_workload(), {}, (configuration,), (), (competitor,))
+        rendered = io.StringIO()
+        with contextlib.redirect_stdout(rendered):
+            llmrig.print_race_result(result)
+        passport = llmrig.passport_from_race_competitor(result, competitor).to_dict()
+        combined = json.dumps(result.to_dict()) + rendered.getvalue() + json.dumps(passport)
+        self.assertNotIn(private, combined)
+        self.assertNotIn("private-user", combined)
+        self.assertEqual(passport["identity"]["benchmark_method"], "race-v2")
+        self.assertEqual(llmrig.validate_passport(passport), [])
+
+    def test_native_exceptions_with_private_path_are_categorical_everywhere(self):
+        private = "/Users/private-user/Secret Models/model.gguf"
+        configurations = (
+            self.race_configuration(runtime="llama.cpp", artifact=llmrig.local_artifact_id("llama.cpp")),
+            self.race_configuration(runtime="ollama", artifact="model:a"),
+        )
+        exceptions = (
+            subprocess.TimeoutExpired(["runtime", private], 1),
+            subprocess.CalledProcessError(1, ["runtime", private], stderr=private),
+            FileNotFoundError(private),
+            OSError(f"cannot open {private}"),
+            RuntimeError(f"runtime failed for {private}"),
+        )
+        for error in exceptions:
+            with self.subTest(exception=type(error).__name__):
+                failing = mock.Mock(runtime="llama.cpp")
+                failing.benchmark.side_effect = error
+                success = mock.Mock(runtime="ollama")
+                success.benchmark.return_value = self.race_competitor()
+                result = llmrig.execute_race(
+                    "logical/model", configurations, (), (failing, success),
+                    self.race_workload(), {},
+                )
+                rendered = io.StringIO()
+                with contextlib.redirect_stdout(rendered):
+                    llmrig.print_race_result(result)
+                public = json.dumps(result.to_dict()) + rendered.getvalue()
+                self.assertNotIn(private, public)
+                self.assertNotIn("private-user", public)
+                self.assertEqual(result.status, "failed")
+                self.assertEqual(llmrig.export_race_passports(result, Path("unused")), ())
+
+    def test_unknown_quantization_warns_without_claiming_equivalence(self):
+        configs = (
+            llmrig.replace(self.race_configuration(runtime="a", artifact="a"), quantization=None),
+            self.race_configuration(runtime="b", artifact="b"),
+        )
+        adapters = []
+        for config in configs:
+            adapter = mock.Mock(runtime=config.runtime)
+            adapter.benchmark.return_value = self.race_competitor(
+                runtime=config.runtime, artifact=config.artifact_id,
+                quantization=config.quantization,
+            )
+            adapters.append(adapter)
+        result = llmrig.execute_race("logical/model", configs, (), adapters, self.race_workload(), {})
+        self.assertTrue(any("quantizations are unknown" in warning for warning in result.warnings))
+        self.assertFalse(any("different quantizations" in warning for warning in result.warnings))
+
+    def test_cross_runtime_warnings_cover_tokenization_and_early_eos(self):
+        configs = (self.race_configuration(runtime="a", artifact="a"), self.race_configuration(runtime="b", artifact="b"))
+        adapters = []
+        for index, config in enumerate(configs):
+            adapter = mock.Mock(runtime=config.runtime)
+            sample = {"generation_tps": 20.0 + index * 10, "prompt_tps": 100.0, "wall_seconds": 2.0, "eval_count": 128 if index == 0 else 80, "prompt_eval_count": 10 + index}
+            adapter.benchmark.return_value = llmrig.replace(self.race_competitor(runtime=config.runtime, artifact=config.artifact_id, generation=20.0 + index * 10), raw_samples=(sample, sample))
+            adapters.append(adapter)
+        result = llmrig.execute_race("logical/model", configs, (), adapters, self.race_workload(), {})
+        self.assertTrue(any("tokenization-equivalent" in warning for warning in result.warnings))
+        self.assertTrue(any("early EOS" in warning for warning in result.warnings))
 
 if __name__ == "__main__":
     unittest.main()
