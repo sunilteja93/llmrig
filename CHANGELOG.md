@@ -2,6 +2,14 @@
 
 All notable changes to LLMRig will be documented here.
 
+## 0.5.1 - 2026-08-27
+
+### Fixed / Documentation
+
+- Recommend `pipx` as the primary CLI installation method.
+- Document a virtual-environment installation fallback.
+- Avoid PEP 668 externally-managed-environment failures on system-managed Python installations.
+
 ## 0.5.0 - 2026-08-27
 
 ### Added
