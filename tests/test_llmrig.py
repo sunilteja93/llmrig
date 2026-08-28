@@ -1775,7 +1775,7 @@ class LLMRigTests(unittest.TestCase):
     def write_mlx_artifact(self, root):
         root.mkdir()
         (root / "config.json").write_text("{}")
-        (root / "weights.safetensors").write_bytes(b"weights")
+        (root / "model.safetensors").write_bytes(b"weights")
 
     def test_local_artifact_parser_splits_only_first_equals(self):
         parser = llmrig.build_parser()
@@ -1838,15 +1838,38 @@ class LLMRigTests(unittest.TestCase):
             model.write_bytes(b"not attested, but nonempty")
             self.assertEqual(llmrig.validated_local_locator("llama.cpp", str(model)), str(model.resolve()))
 
-    def test_local_mlx_requires_config_and_immediate_nonempty_weights(self):
+    def test_local_mlx_accepts_immediate_model_safetensors(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "mlx model"
             root.mkdir()
             (root / "config.json").write_text("{}")
-            with self.assertRaises(ValueError):
-                llmrig.validated_local_locator("mlx-lm", str(root))
-            (root / "weights.npz").write_bytes(b"weights")
+            (root / "model.safetensors").write_bytes(b"weights")
             self.assertEqual(llmrig.validated_local_locator("mlx-lm", str(root)), str(root.resolve()))
+
+    def test_local_mlx_accepts_immediate_sharded_model_safetensors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "mlx model"
+            root.mkdir()
+            (root / "config.json").write_text("{}")
+            (root / "model-00001-of-00002.safetensors").write_bytes(b"weights")
+            self.assertEqual(llmrig.validated_local_locator("mlx-lm", str(root)), str(root.resolve()))
+
+    def assert_local_mlx_rejects_weights_privately(self, filename):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / f"Secret Models private-user {filename}"
+            root.mkdir()
+            (root / "config.json").write_text("{}")
+            (root / filename).write_bytes(b"weights")
+            with self.assertRaises(ValueError) as caught:
+                llmrig.validated_local_locator("mlx-lm", str(root))
+            self.assertNotIn("private-user", str(caught.exception))
+            self.assertNotIn(str(root), str(caught.exception))
+
+    def test_local_mlx_rejects_npz_weights_privately(self):
+        self.assert_local_mlx_rejects_weights_privately("weights.npz")
+
+    def test_local_mlx_rejects_arbitrarily_named_safetensors_privately(self):
+        self.assert_local_mlx_rejects_weights_privately("weights.safetensors")
 
     def test_local_artifact_paths_support_spaces_unicode_and_equals(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -2208,6 +2231,12 @@ class LLMRigTests(unittest.TestCase):
             llmrig.MlxExecutionAdapter(), output=self.mlx_metrics_output(), stderr=fake
         )
         self.assertEqual(competitor.generated_tokens, 40)
+
+    def test_mlx_adapter_command_omits_bare_verbose_argument(self):
+        _, command = self.run_native_adapter(
+            llmrig.MlxExecutionAdapter(), output=self.mlx_metrics_output()
+        )
+        self.assertNotIn("--verbose", command)
 
     def run_native_adapter(self, adapter, output, stderr=""):
         workload = llmrig.RaceWorkload("prompt; $(unsafe)", runs=1, warmup_runs=0)

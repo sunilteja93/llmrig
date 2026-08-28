@@ -4253,7 +4253,7 @@ class MlxExecutionAdapter:
             tokens = min(workload.warmup_num_predict, workload.num_predict) if index < workload.warmup_runs else workload.num_predict
             command = [executable, "--model", target._locator, "--prompt", workload.prompt,
                        "--max-tokens", str(tokens), "--temp", str(workload.temperature),
-                       "--seed", str(workload.seed), "--max-kv-size", str(workload.context), "--verbose"]
+                       "--seed", str(workload.seed), "--max-kv-size", str(workload.context)]
             process = run_cmd(command, timeout=workload.request_timeout_s)
             if process.returncode != 0:
                 raise RuntimeError("MLX-LM local execution failed")
@@ -4327,7 +4327,8 @@ def validated_local_locator(runtime: str, supplied: str) -> str:
                 item
                 for item in path.iterdir()
                 if item.is_file()
-                and item.suffix.lower() in {".safetensors", ".npz"}
+                and item.name.startswith("model")
+                and item.name.endswith(".safetensors")
                 and item.stat().st_size > 0
             ) if path.is_dir() else ()
             valid = path.is_dir() and config.is_file() and config.stat().st_size > 0 and any(weights)

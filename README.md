@@ -215,7 +215,7 @@ downloads artifacts. At least two executable configurations are required; otherw
 the command reports the eligible and blocked alternatives without running a benchmark.
 At most one explicit artifact may be supplied for each native runtime. A GGUF target
 must be a non-empty local file; an MLX-LM target must contain an immediate `config.json`
-and at least one immediate non-empty `.safetensors` or `.npz` weights file. These are
+and at least one immediate non-empty `model*.safetensors` weights file. These are
 structural checks, not proof that the runtime can load the artifact.
 The local-artifact association is user-supplied evidence, not independent proof that
 differently packaged artifacts contain identical model weights or provide identical
