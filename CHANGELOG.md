@@ -2,6 +2,37 @@
 
 All notable changes to LLMRig will be documented here.
 
+## 0.6.0 - 2026-08-27
+
+### Added
+
+- Add native cross-runtime execution and benchmarking for explicit already-local artifacts across Ollama, llama.cpp, and MLX-LM.
+- Add repeatable `--local-artifact RUNTIME=PATH` support for race and analysis commands.
+- Add `race-v2` cross-runtime measurement with generation throughput, prompt-evaluation throughput, and normalized inference latency.
+- Add benchmark passport support for successfully measured native race competitors.
+- Add `llmrig choose <model>` for explainable objective-specific generation, prompt, latency, and balanced decisions.
+- Add `llmrig optimize <model>` for noise-aware measured-performance Pareto analysis.
+
+### Decision intelligence
+
+- Generation, prompt, and latency decisions reuse the existing metric-specific race winners.
+- A balanced recommendation exists only when one unique measured-performance Pareto leader remains; multiple Pareto frontier members remain explicitly unresolved.
+- Decisions use no composite or universal score and do not infer model quality from speed.
+
+### Reliability and privacy
+
+- Preserve the 5% race noise threshold for winner and dominance decisions.
+- Omit Pareto dimensions globally when values are missing, invalid, or non-finite; unknown values are never coerced to zero.
+- Sanitize private filesystem-shaped artifact IDs at the analysis boundary so local paths are not exposed in Decision or Pareto results.
+- Trust llama.cpp stderr diagnostics, rather than generated stdout, for benchmark metrics.
+- Keep native execution targets private and non-serializable.
+- Do not automatically download native models or install llama.cpp or MLX-LM.
+
+### Compatibility
+
+- Support Python 3.9+ on macOS, Linux, and Windows with no third-party Python runtime dependencies.
+- Ollama, llama.cpp, and MLX-LM have LLMRig execution and benchmark support where compatible artifacts and runtimes are already available locally; LLMRig does not install or fully manage llama.cpp or MLX-LM, and compatibility is specific to each model, artifact, and runtime combination.
+
 ## 0.5.1 - 2026-08-27
 
 ### Fixed / Documentation

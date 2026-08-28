@@ -156,7 +156,7 @@ class LLMRigTests(unittest.TestCase):
     def test_project_branding(self):
         self.assertEqual(llmrig.PROJECT_NAME, "LLMRig")
         self.assertEqual(llmrig.PROJECT_SLUG, "llmrig")
-        self.assertEqual(llmrig.VERSION, "0.5.1")
+        self.assertEqual(llmrig.VERSION, "0.6.0")
 
     def test_catalog_is_valid(self):
         self.assertEqual(llmrig.validate_curated_catalog(), [])
