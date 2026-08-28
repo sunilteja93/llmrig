@@ -10,6 +10,7 @@ import importlib.metadata
 import importlib.util
 import hashlib
 import json
+import math
 import os
 import platform
 import re
@@ -33,7 +34,7 @@ CURATED_SNAPSHOT_DATE = "2026-08-19"
 DEFAULT_OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 HF_MODELS_API = "https://huggingface.co/api/models"
 CACHE_TTL_SECONDS = 6 * 60 * 60
-RACE_METHOD_VERSION = "race-v1"
+RACE_METHOD_VERSION = "race-v2"
 RACE_CONTEXT = 4096
 RACE_NUM_PREDICT = 128
 RACE_NOISE_THRESHOLD = 0.05
@@ -302,6 +303,32 @@ class RaceConfiguration:
         }
 
 
+class ExecutionTarget:
+    """Private, deliberately non-serializable runtime invocation state."""
+
+    __slots__ = ("configuration", "_locator")
+
+    def __init__(self, configuration: RaceConfiguration, locator: str) -> None:
+        self.configuration = configuration
+        self._locator = locator
+
+    def __repr__(self) -> str:
+        return f"ExecutionTarget(configuration={self.configuration!r})"
+
+    @staticmethod
+    def _serialization_error() -> TypeError:
+        return TypeError("private execution targets cannot be serialized or copied")
+
+    def __reduce__(self) -> Any:
+        raise self._serialization_error()
+
+    def __reduce_ex__(self, protocol: int) -> Any:
+        raise self._serialization_error()
+
+    def __getstate__(self) -> Any:
+        raise self._serialization_error()
+
+
 @dataclass(frozen=True)
 class RaceCompetitor:
     """Measured execution result for one eligible configuration."""
@@ -539,7 +566,7 @@ class ExecutionAdapter(Protocol):
     runtime: str
 
     def benchmark(
-        self, configuration: RaceConfiguration, workload: RaceWorkload
+        self, target: ExecutionTarget, workload: RaceWorkload
     ) -> RaceCompetitor: ...
 
 
@@ -1784,16 +1811,21 @@ def detected_runtime_version(executable: str) -> Optional[str]:
     return text[0][:200].replace(str(Path.home()), "~")
 
 
+def llama_cpp_executable() -> Optional[str]:
+    """Return the first recognized local llama.cpp CLI locator."""
+    return next(
+        (candidate for candidate in ("llama-cli", "llama.cpp") if shutil.which(candidate)),
+        None,
+    )
+
+
 class LlamaCppRuntimeProvider:
     """Safe local capability detection for llama.cpp; never executes weights."""
 
     name = "llama.cpp"
 
     def info(self) -> Dict[str, Any]:
-        executable = next(
-            (candidate for candidate in ("llama-cli", "llama.cpp") if shutil.which(candidate)),
-            None,
-        )
+        executable = llama_cpp_executable()
         return {
             "installed": executable is not None,
             "version": detected_runtime_version(executable) if executable else None,
@@ -1845,8 +1877,8 @@ class LlamaCppRuntimeProvider:
             supported_architectures=(),
             runtime_execution_capable=True,
             llmrig_installation_supported=False,
-            llmrig_execution_supported=False,
-            llmrig_benchmark_supported=False,
+            llmrig_execution_supported=True,
+            llmrig_benchmark_supported=True,
             confidence=Confidence.HIGH,
             evidence=evidence,
             unknowns=unknowns + ("supported architectures are unknown",),
@@ -1949,8 +1981,8 @@ class MlxRuntimeProvider:
             supported_architectures=("arm64", "aarch64"),
             runtime_execution_capable=True,
             llmrig_installation_supported=False,
-            llmrig_execution_supported=False,
-            llmrig_benchmark_supported=False,
+            llmrig_execution_supported=True,
+            llmrig_benchmark_supported=True,
             confidence=Confidence.HIGH,
             evidence=evidence,
             unknowns=tuple(blockers)
@@ -3985,8 +4017,9 @@ class OllamaExecutionAdapter:
         self.host = host
 
     def benchmark(
-        self, configuration: RaceConfiguration, workload: RaceWorkload
+        self, target: ExecutionTarget, workload: RaceWorkload
     ) -> RaceCompetitor:
+        configuration = target.configuration if isinstance(target, ExecutionTarget) else target
         if not OLLAMA_RUNTIME.is_available(self.host):
             raise RuntimeError("Ollama service is unavailable")
         isolate_ollama_for_benchmark(self.host)
@@ -4016,7 +4049,14 @@ class OllamaExecutionAdapter:
                 metrics = speed_metrics(response)
                 if metrics.get("generation_tps") is None or not metrics.get("eval_count"):
                     raise RuntimeError("Ollama response did not contain valid generation metrics")
-                metrics["wall_seconds"] = round(time.perf_counter() - started, 4)
+                metrics["process_wall_seconds"] = round(time.perf_counter() - started, 4)
+                prompt_duration = metrics.get("prompt_eval_duration_s")
+                generation_duration = metrics.get("eval_duration_s")
+                metrics["wall_seconds"] = (
+                    round(prompt_duration + generation_duration, 4)
+                    if prompt_duration is not None and generation_duration is not None
+                    else None
+                )
                 timed.append(metrics)
         finally:
             unload_ollama_model(self.host, configuration.artifact_id)
@@ -4031,7 +4071,7 @@ class OllamaExecutionAdapter:
         prompt = [
             item["prompt_tps"] for item in timed if item.get("prompt_tps") is not None
         ]
-        latency = [item["wall_seconds"] for item in timed]
+        latency = [item["wall_seconds"] for item in timed if item.get("wall_seconds") is not None]
         generated_tokens = sum(int(item.get("eval_count") or 0) for item in timed)
         evidence = (
             RecommendationEvidence(
@@ -4066,6 +4106,163 @@ class OllamaExecutionAdapter:
         )
 
 
+_METRIC_NUMBER = r"(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d*)?(?:[eE][+-]?\d+)?"
+_ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
+_LLAMA_PREFIX = r"(?:llama_perf_context_print|llama_print_timings)"
+
+
+def _positive_metric(value: str) -> float:
+    number = float(value.replace(",", ""))
+    if not math.isfinite(number) or number <= 0:
+        raise ValueError("metric must be positive")
+    return number
+
+
+def parse_llama_cpp_metrics(output: str) -> Dict[str, Any]:
+    """Parse exactly one complete, explicitly prefixed llama.cpp timing block."""
+    clean = _ANSI_ESCAPE.sub("", output).replace("\r", "")
+    header = re.compile(
+        rf"(?im)^\s*(?P<source>{_LLAMA_PREFIX}):\s*(?P<kind>prompt eval|eval) time\s*=",
+    )
+    headers = header.findall(clean)
+    if sum(kind.lower().startswith("prompt") for _, kind in headers) != 1 or sum(
+        kind.lower() == "eval" for _, kind in headers
+    ) != 1:
+        raise ValueError("llama.cpp timing output is incomplete or ambiguous")
+    if len({source.lower() for source, _ in headers}) != 1:
+        raise ValueError("llama.cpp timing output mixes incompatible timing prefixes")
+    pattern = re.compile(
+        rf"(?im)^\s*(?P<source>{_LLAMA_PREFIX}):\s*(?P<kind>prompt eval|eval) time\s*=\s*"
+        rf"(?P<ms>{_METRIC_NUMBER})\s*ms\s*/\s*(?P<tokens>\d+)\s+"
+        rf"(?:tokens?|runs?)\s*\(\s*(?:(?:{_METRIC_NUMBER})\s*ms\s+per\s+token\s*,\s*)?"
+        rf"(?P<tps>{_METRIC_NUMBER})\s+tokens?\s+per\s+second\s*\)",
+    )
+    matches = list(pattern.finditer(clean))
+    if len(matches) != 2:
+        raise ValueError("llama.cpp output did not contain required measured timing metrics")
+    values: Dict[str, Any] = {}
+    for match in matches:
+        prefix = "prompt_eval" if match.group("kind").lower().startswith("prompt") else "eval"
+        count = int(match.group("tokens"))
+        if count <= 0:
+            raise ValueError("metric count must be positive")
+        values[f"{prefix}_count"] = count
+        values[f"{prefix}_duration_s"] = round(_positive_metric(match.group("ms")) / 1000, 6)
+        values["prompt_tps" if prefix == "prompt_eval" else "generation_tps"] = _positive_metric(match.group("tps"))
+    values["wall_seconds"] = round(values["prompt_eval_duration_s"] + values["eval_duration_s"], 4)
+    values["total_duration_s"] = values["wall_seconds"]
+    return values
+
+
+def parse_mlx_metrics(output: str) -> Dict[str, Any]:
+    """Parse one MLX-LM metric pair after the final framework separator."""
+    lines = output.replace("\r", "").splitlines()
+    separators = [index for index, line in enumerate(lines) if line.strip() == "=========="]
+    if not separators:
+        raise ValueError("MLX-LM output did not contain the framework metric separator")
+    suffix = "\n".join(lines[separators[-1] + 1 :])
+    pattern = re.compile(
+        rf"^\s*(Prompt|Generation)\s*:\s*(\d+)\s+tokens?\s*,\s*"
+        rf"({_METRIC_NUMBER})\s+tokens?(?:-|\s+)per(?:-|\s+)sec\s*$",
+        re.I | re.M,
+    )
+    matches = pattern.findall(suffix)
+    if sum(kind.lower() == "prompt" for kind, _, _ in matches) != 1 or sum(
+        kind.lower() == "generation" for kind, _, _ in matches
+    ) != 1:
+        raise ValueError("MLX-LM output metrics are incomplete or ambiguous")
+    values: Dict[str, Any] = {}
+    for kind, count, rate in matches:
+        tokens = int(count)
+        tps = _positive_metric(rate)
+        if tokens <= 0:
+            raise ValueError("metric count must be positive")
+        prefix = "prompt_eval" if kind.lower() == "prompt" else "eval"
+        values[f"{prefix}_count"] = tokens
+        values[f"{prefix}_duration_s"] = round(tokens / tps, 6)
+        values["prompt_tps" if prefix == "prompt_eval" else "generation_tps"] = tps
+    values["wall_seconds"] = round(values["prompt_eval_duration_s"] + values["eval_duration_s"], 4)
+    values["total_duration_s"] = values["wall_seconds"]
+    return values
+
+
+def native_race_competitor(
+    configuration: RaceConfiguration,
+    samples: Sequence[Dict[str, Any]],
+    workload: RaceWorkload,
+) -> RaceCompetitor:
+    generation = [float(item["generation_tps"]) for item in samples]
+    prompt = [float(item["prompt_tps"]) for item in samples]
+    latency = [float(item["wall_seconds"]) for item in samples]
+    return RaceCompetitor(
+        configuration.logical_model_id, configuration.runtime, configuration.artifact_id,
+        configuration.artifact_fingerprint, configuration.artifact_format,
+        configuration.quantization, configuration.runtime_version, "success",
+        round(sum(generation) / len(generation), 2),
+        round(sum(prompt) / len(prompt), 2),
+        round(sum(latency) / len(latency), 4),
+        sum(int(item["eval_count"]) for item in samples), len(samples), len(samples),
+        len(samples), len(samples), now_iso(),
+        evidence=(RecommendationEvidence(
+            "measured", f"{configuration.runtime} local execution",
+            f"{workload.runs} timed run(s) produced runtime-reported inference metrics",
+        ),),
+        warnings=("performance measurement does not establish model quality",),
+        raw_samples=tuple(dict(item) for item in samples),
+    )
+
+
+class LlamaCppExecutionAdapter:
+    runtime = "llama.cpp"
+
+    def benchmark(self, target: ExecutionTarget, workload: RaceWorkload) -> RaceCompetitor:
+        if not isinstance(target, ExecutionTarget):
+            raise RuntimeError("llama.cpp execution requires a private local target")
+        executable = llama_cpp_executable()
+        if not executable or not LLAMA_CPP_RUNTIME.is_available():
+            raise RuntimeError("llama.cpp is unavailable")
+        samples = []
+        for index in range(workload.warmup_runs + workload.runs):
+            tokens = min(workload.warmup_num_predict, workload.num_predict) if index < workload.warmup_runs else workload.num_predict
+            command = [executable, "--model", target._locator, "--prompt", workload.prompt,
+                       "--ctx-size", str(workload.context), "--n-predict", str(tokens),
+                       "--temp", str(workload.temperature), "--seed", str(workload.seed)]
+            process = run_cmd(command, timeout=workload.request_timeout_s)
+            if process.returncode != 0:
+                raise RuntimeError("llama.cpp local execution failed")
+            try:
+                metrics = parse_llama_cpp_metrics(process.stderr or "")
+            except ValueError:
+                raise RuntimeError("llama.cpp timing metrics are unavailable or ambiguous")
+            if index >= workload.warmup_runs:
+                samples.append(metrics)
+        return native_race_competitor(target.configuration, samples, workload)
+
+
+class MlxExecutionAdapter:
+    runtime = "mlx-lm"
+
+    def benchmark(self, target: ExecutionTarget, workload: RaceWorkload) -> RaceCompetitor:
+        if not isinstance(target, ExecutionTarget):
+            raise RuntimeError("MLX-LM execution requires a private local target")
+        executable = shutil.which("mlx_lm.generate")
+        if not executable or not MLX_RUNTIME.is_available():
+            raise RuntimeError("MLX-LM is unavailable")
+        samples = []
+        for index in range(workload.warmup_runs + workload.runs):
+            tokens = min(workload.warmup_num_predict, workload.num_predict) if index < workload.warmup_runs else workload.num_predict
+            command = [executable, "--model", target._locator, "--prompt", workload.prompt,
+                       "--max-tokens", str(tokens), "--temp", str(workload.temperature),
+                       "--seed", str(workload.seed), "--max-kv-size", str(workload.context)]
+            process = run_cmd(command, timeout=workload.request_timeout_s)
+            if process.returncode != 0:
+                raise RuntimeError("MLX-LM local execution failed")
+            metrics = parse_mlx_metrics(process.stdout or "")
+            if index >= workload.warmup_runs:
+                samples.append(metrics)
+        return native_race_competitor(target.configuration, samples, workload)
+
+
 def race_hardware_summary(profile: Dict[str, Any]) -> Dict[str, Any]:
     """Minimal privacy-safe hardware facts relevant to a local comparison."""
     return {
@@ -4087,10 +4284,125 @@ def race_safe_runtime_version(value: Optional[str]) -> Optional[str]:
     return text
 
 
+def parse_local_artifact_values(values: Sequence[str]) -> Tuple[Tuple[str, str], ...]:
+    """Parse repeatable runtime=locator inputs without returning locators in errors."""
+    parsed = []
+    seen = set()
+    for value in values:
+        if "=" not in value:
+            raise ValueError("local artifact must use runtime=local-path syntax")
+        runtime, locator = value.split("=", 1)
+        runtime = runtime.strip().lower()
+        if runtime not in {"llama.cpp", "mlx-lm"}:
+            if runtime == "ollama":
+                raise ValueError("explicit Ollama local artifacts are not supported; use existing local Ollama discovery")
+            raise ValueError("the supplied local artifact uses an unsupported runtime")
+        if not locator or not locator.strip():
+            raise ValueError("local artifact must use runtime=local-path syntax")
+        if runtime in seen:
+            raise ValueError("only one explicit local artifact per native runtime is supported")
+        seen.add(runtime)
+        parsed.append((runtime, locator))
+    return tuple(parsed)
+
+
+def local_artifact_id(runtime: str) -> str:
+    """Return a path-independent ID for the race's single user-supplied target."""
+    return f"local:{runtime}:user-supplied"
+
+
+def validated_local_locator(runtime: str, supplied: str) -> str:
+    """Validate structural local evidence and return only private normalized state."""
+    path = Path(supplied).expanduser()
+    try:
+        if runtime == "llama.cpp":
+            valid = (
+                path.is_file()
+                and path.suffix.lower() == ".gguf"
+                and path.stat().st_size > 0
+            )
+        else:
+            config = path / "config.json"
+            weights = (
+                item
+                for item in path.iterdir()
+                if item.is_file()
+                and item.name.startswith("model")
+                and item.name.endswith(".safetensors")
+                and item.stat().st_size > 0
+            ) if path.is_dir() else ()
+            valid = path.is_dir() and config.is_file() and config.stat().st_size > 0 and any(weights)
+        if valid:
+            return str(path.resolve(strict=True))
+    except (OSError, RuntimeError):
+        pass
+    kind = (
+        "non-empty local GGUF file"
+        if runtime == "llama.cpp"
+        else "local MLX directory with config.json and local weights"
+    )
+    raise ValueError(f"the supplied {runtime} local artifact is not a {kind}")
+
+
+def local_execution_targets(
+    identifier: str,
+    values: Sequence[str],
+    profile: Dict[str, Any],
+    adapters: Sequence[ExecutionAdapter],
+    compatibility: Optional[CompatibilityResult] = None,
+) -> Tuple[ExecutionTarget, ...]:
+    """Validate explicit native artifacts and create private invocation targets."""
+    capabilities = {item.runtime: item for item in runtime_capabilities(profile)}
+    adapter_names = {adapter.runtime for adapter in adapters}
+    compatibility = compatibility or compatibility_for_identifier(identifier, profile)
+    logical_id = compatibility.model_id
+    targets = []
+    for runtime, supplied in parse_local_artifact_values(values):
+        locator = validated_local_locator(runtime, supplied)
+        capability = capabilities.get(runtime)
+        blockers = []
+        if capability is None:
+            blockers.append("runtime capability is unknown")
+        else:
+            if not capability.installed:
+                blockers.append("runtime is not installed")
+            if not capability.available:
+                blockers.append("runtime is not currently available")
+            if not capability.llmrig_execution_supported:
+                blockers.append("LLMRig has no execution adapter for this runtime")
+            if not capability.llmrig_benchmark_supported:
+                blockers.append("LLMRig has no benchmark adapter for this runtime")
+        if runtime not in adapter_names:
+            blockers.append("LLMRig execution adapter is unavailable")
+        if compatibility.can_run is False:
+            blockers.append(compatibility.reason or "static machine compatibility is incompatible")
+        elif compatibility.can_run is not True:
+            blockers.append("static machine compatibility is unresolved")
+        evidence = (
+            RecommendationEvidence(
+                "user-supplied-local-association", "race command input",
+                "the user associated this private local execution target with the requested logical model; model identity was not independently attested",
+            ),
+            RecommendationEvidence(
+                "estimated", "privacy-safe local target identity",
+                "the public local target ID denotes the race's user-supplied target slot and is not a model-content fingerprint or artifact attestation",
+            ),
+        )
+        configuration = RaceConfiguration(
+            logical_id, runtime, local_artifact_id(runtime),
+            "GGUF" if runtime == "llama.cpp" else "MLX", None,
+            race_safe_runtime_version(capability.version) if capability else None,
+            not blockers, None, tuple(dict.fromkeys(blockers)), evidence,
+        )
+        targets.append(ExecutionTarget(configuration, locator))
+    return tuple(sorted(targets, key=lambda item: (item.configuration.runtime, item.configuration.artifact_id)))
+
+
 def race_configurations(
     identifier: str,
     profile: Dict[str, Any],
     adapters: Sequence[ExecutionAdapter],
+    compatibility: Optional[CompatibilityResult] = None,
 ) -> Tuple[str, Tuple[RaceConfiguration, ...], Tuple[RaceConfiguration, ...], Optional[str]]:
     """Resolve deterministic local eligibility without pulling or downloading anything."""
     adapter_names = {adapter.runtime for adapter in adapters}
@@ -4152,7 +4464,7 @@ def race_configurations(
             (eligible if configuration.eligible else ineligible).append(configuration)
         reason = None
     else:
-        compatibility = compatibility_for_identifier(identifier, profile)
+        compatibility = compatibility or compatibility_for_identifier(identifier, profile)
         logical_model_id = compatibility.model_id
         artifacts = {artifact.artifact_id: artifact for artifact in compatibility.artifacts}
         for candidate in compatibility.runtime_candidates:
@@ -4272,6 +4584,7 @@ def execute_race(
     hardware: Dict[str, Any],
     resolution_reason: Optional[str] = None,
     timestamp: Optional[str] = None,
+    execution_targets: Sequence[ExecutionTarget] = (),
 ) -> RaceResult:
     """Measure eligible configurations or return a structured unavailable result."""
     ordered_eligible = unique_race_configurations(eligible)
@@ -4292,11 +4605,13 @@ def execute_race(
         )
 
     adapter_by_runtime = {adapter.runtime: adapter for adapter in adapters}
+    target_by_identity = {target.configuration.identity: target for target in execution_targets}
     competitors = []
     for configuration in ordered_eligible:
-        adapter = adapter_by_runtime[configuration.runtime]
         try:
-            competitors.append(adapter.benchmark(configuration, workload))
+            adapter = adapter_by_runtime[configuration.runtime]
+            target = target_by_identity.get(configuration.identity, configuration)
+            competitors.append(adapter.benchmark(target, workload))
         except subprocess.TimeoutExpired:
             competitors.append(failed_race_competitor(configuration, "benchmark timed out"))
         except Exception:
@@ -4305,13 +4620,36 @@ def execute_race(
         sorted(competitors, key=lambda item: (item.runtime, item.artifact_id))
     )
     failures = [item for item in ordered_competitors if item.execution_status != "success"]
-    quantizations = {item.quantization or "unknown" for item in ordered_competitors}
+    known_quantizations = {
+        item.quantization for item in ordered_competitors if item.quantization is not None
+    }
     formats = {item.artifact_format for item in ordered_competitors}
     warnings = []
-    if len(quantizations) > 1:
+    if any(item.quantization is None for item in ordered_competitors):
+        warnings.append("one or more competitor quantizations are unknown; artifact equivalence cannot be established")
+    if len(known_quantizations) > 1:
         warnings.append("competitors use different quantizations; speed results are not artifact-equivalent")
     if len(formats) > 1:
         warnings.append("competitors use different artifact formats; results compare executable configurations, not identical artifacts")
+    if any(
+        evidence.kind == "user-supplied-local-association"
+        for configuration in ordered_eligible for evidence in configuration.evidence
+    ):
+        warnings.append("local native artifact identity is user-associated with the logical model and is not independently attested")
+    prompt_counts = {
+        int(sample["prompt_eval_count"])
+        for item in ordered_competitors for sample in item.raw_samples
+        if sample.get("prompt_eval_count") is not None
+    }
+    if len(prompt_counts) > 1:
+        warnings.append("prompt token counts differ across runtimes; prompt-evaluation throughput is not tokenization-equivalent")
+    generated_counts = [
+        int(sample["eval_count"])
+        for item in ordered_competitors for sample in item.raw_samples
+        if sample.get("eval_count") is not None
+    ]
+    if generated_counts and min(generated_counts) < max(generated_counts) * 0.95:
+        warnings.append("generated token counts materially differ or early EOS occurred; throughput compares observed execution, not identical token sequences")
     if failures:
         return RaceResult(
             "failed",
@@ -4865,7 +5203,7 @@ def print_race_result(result: RaceResult) -> None:
             if item.execution_status == "success":
                 print(f"  Generation: {item.generation_tps} tok/s")
                 print(f"  Prompt evaluation: {item.prompt_eval_tps} tok/s")
-                print(f"  Mean wall latency: {item.total_latency_s} s")
+                print(f"  Mean normalized inference latency: {item.total_latency_s} s")
                 print(f"  Generated tokens: {item.generated_tokens}")
             elif item.failure:
                 print(f"  Failure: {item.failure}")
@@ -4912,11 +5250,31 @@ def command_race(args: argparse.Namespace) -> int:
         eprint("race --num-predict must be between 1 and 512")
         return 2
 
+    local_values = tuple(getattr(args, "local_artifact", ()) or ())
+    try:
+        parse_local_artifact_values(local_values)
+    except ValueError as error:
+        eprint(str(error))
+        return 2
     profile = hardware_profile()
-    adapters: Tuple[ExecutionAdapter, ...] = (OllamaExecutionAdapter(args.host),)
-    logical_id, eligible, ineligible, resolution_reason = race_configurations(
-        args.model, profile, adapters
+    adapters: Tuple[ExecutionAdapter, ...] = (
+        OllamaExecutionAdapter(args.host), LlamaCppExecutionAdapter(), MlxExecutionAdapter()
     )
+    compatibility = compatibility_for_identifier(args.model, profile) if local_values else None
+    try:
+        native_targets = local_execution_targets(
+            args.model, local_values, profile, adapters, compatibility
+        )
+    except ValueError as error:
+        eprint(str(error))
+        return 2
+    logical_id, eligible, ineligible, resolution_reason = race_configurations(
+        args.model, profile, adapters, compatibility
+    )
+    native_eligible = tuple(target.configuration for target in native_targets if target.configuration.eligible)
+    native_ineligible = tuple(target.configuration for target in native_targets if not target.configuration.eligible)
+    eligible = unique_race_configurations(tuple(eligible) + native_eligible)
+    ineligible = unique_race_configurations(tuple(ineligible) + native_ineligible)
     workload = RaceWorkload(
         prompt=SPEED_PROMPT,
         context=args.context,
@@ -4931,6 +5289,7 @@ def command_race(args: argparse.Namespace) -> int:
         workload,
         race_hardware_summary(profile),
         resolution_reason,
+        execution_targets=native_targets,
     )
     passport_dir = getattr(args, "passport_dir", None)
     if passport_dir:
@@ -5157,6 +5516,10 @@ def build_parser() -> argparse.ArgumentParser:
     race.add_argument("--runs", type=int, default=2)
     race.add_argument("--num-predict", type=int, default=RACE_NUM_PREDICT)
     race.add_argument("--host", default=DEFAULT_OLLAMA_HOST)
+    race.add_argument(
+        "--local-artifact", action="append", default=[], metavar="RUNTIME=PATH",
+        help="Use an explicit already-local MLX-LM directory or llama.cpp GGUF file.",
+    )
     race.add_argument(
         "--passport-dir",
         help="Write one passport per successfully measured competitor.",
