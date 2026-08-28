@@ -27,10 +27,40 @@ It inspects hardware, resolves logical models and runnable artifacts, identifies
 
 ### Install
 
-Install LLMRig from PyPI:
+LLMRig is a CLI application, so the recommended installation method is
+[`pipx`](https://pipx.pypa.io/), which installs it in an isolated environment:
 
 ```bash
-python3 -m pip install llmrig
+pipx install llmrig
+```
+
+Upgrade an existing installation:
+
+```bash
+pipx upgrade llmrig
+```
+
+Verify the installed CLI:
+
+```bash
+llmrig --version
+```
+
+Some system-managed Python installations, including common Homebrew Python setups,
+prevent global `pip` installs under PEP 668. If `pipx` is not available, use a
+virtual environment instead of modifying the system Python:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate  # macOS/Linux
+python -m pip install llmrig
+```
+
+On Windows, activate the environment before installing with:
+
+```powershell
+.venv\Scripts\Activate.ps1
+python -m pip install llmrig
 ```
 
 Then use LLMRig from anywhere:
