@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "llmrig"
 dynamic = ["version"]
-description = "Know what your rig can run. Hardware-aware local LLM discovery, recommendation, setup, and benchmarking."
+description = "Open compatibility and performance intelligence for local AI models and runtimes."
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"

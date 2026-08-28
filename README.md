@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  Hardware-aware local LLM selection, setup, and benchmarking.
+  The open compatibility and performance intelligence layer for local AI.
 </p>
 
 <p align="center">
@@ -19,11 +19,11 @@
   <img src="https://raw.githubusercontent.com/sunilteja93/llmrig/main/assets/llmrig-terminal.svg" alt="LLMRig local model fit flow" width="100%" />
 </p>
 
-LLMRig answers one practical question:
+LLMRig helps answer one practical question:
 
 > **Which local LLM can this machine actually run well?**
 
-It detects the hardware you actually have, estimates a conservative model budget, recommends a practical model and context configuration, can set it up through Ollama, and benchmarks the result on the machine itself.
+It inspects hardware, resolves logical models and runnable artifacts, identifies runtime paths, estimates compatibility, measures local execution, compares configurations, and preserves reproducible benchmark evidence. Curated setup and measured execution currently use Ollama.
 
 ### Install
 
@@ -51,35 +51,40 @@ python3 llmrig.py
 **LLMRig has no third-party Python runtime dependencies.** The CLI uses only the Python standard library.
 
 ```text
-detect hardware → estimate fit → recommend → setup → benchmark → compare
+detect hardware
+→ resolve model + artifact
+→ identify runtime paths
+→ estimate compatibility
+→ execute locally
+→ measure
+→ compare
+→ preserve evidence
 ```
 
 LLMRig is currently **Qwen-first**. The architecture is intended to expand to additional model families, runtimes, GPUs, and platforms without changing the core workflow.
 
 ## What LLMRig does
 
-- Runs on **macOS, Windows, and Linux**
-- Detects CPU/chip, architecture, RAM, free disk space, and GPU/VRAM when available
-- Respects `OLLAMA_MODELS` when checking model-storage capacity
-- Checks whether Ollama and its local API are available
-- Gives a conservative local-LLM readiness assessment
-- Recommends a model for `balanced`, `speed`, or `quality` priorities
-- Separates official Qwen models from community reduced-refusal derivatives
-- Discovers newly published official Qwen repositories from Hugging Face at runtime
-- Auto-pulls only curated, verified Ollama identifiers
-- Benchmarks generation speed, prompt-evaluation speed, accelerator residency, and lightweight correctness checks
-- Isolates benchmark runs by unloading resident Ollama models before and after each test
-- Saves shareable benchmark reports as JSON and Markdown
-- Uses only the Python standard library
+- Detects privacy-safe hardware facts across **macOS, Windows, and Linux**.
+- Separates logical models from GGUF, MLX, Safetensors, and curated Ollama artifacts, with generic read-only Hugging Face resolution.
+- Analyzes compatibility with explicit confidence, evidence provenance, practical context, and unknown handling.
+- Detects Ollama, llama.cpp, and MLX-LM runtime capabilities without implying an execution adapter exists.
+- Recommends and sets up only curated, verified model identifiers through Ollama.
+- Measures local generation, prompt evaluation, latency, residency, and lightweight correctness through the Ollama benchmark adapter.
+- Races at least two unique executable configurations with metric-specific, non-composite results.
+- Exports privacy-safe benchmark passports containing raw per-run evidence and deterministic identities.
+- Verifies passport structure, integrity, aggregates, and privacy entirely offline without inference.
 
 ## Current scope
 
-LLMRig currently has a **Qwen-first curated catalog** and uses Ollama as its local inference backend. Live discovery tracks likely Qwen LLM/multimodal inference repositories, while automatic installation is limited to model identifiers that have been manually verified.
+LLMRig remains **Qwen-first**. Its curated catalog supports practical recommendations and setup, while generic Hugging Face resolution inspects repository metadata without downloading model weights. Automatic installation remains limited to manually verified curated identifiers.
+
+Ollama is currently LLMRig's implemented setup, execution, and benchmark backend. LLMRig can detect and reason about llama.cpp and MLX-LM capabilities, but execution adapters for those runtimes are not yet implemented.
 
 The project name is intentionally broader than Qwen because the long-term direction is to support additional model families and runtimes without changing the user experience:
 
 ```text
-hardware → discover → recommend → setup → benchmark → compare
+hardware → model + artifact → runtime paths → compatibility → measurement → evidence
 ```
 
 If you want to add support for another model family, runtime, GPU vendor, or operating system, see [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -154,7 +159,8 @@ llmrig race qwen3.8:27b-mlx --json
 and backed by an LLMRig execution/benchmark adapter. It never installs runtimes or
 downloads artifacts. At least two executable configurations are required; otherwise
 the command reports the eligible and blocked alternatives without running a benchmark.
-Phase 5 supports Ollama execution only. llama.cpp and MLX-LM remain capability-only.
+Runtime race execution currently supports Ollama. llama.cpp and MLX-LM are detected
+as capability providers but do not yet have LLMRig execution adapters.
 
 Exit `0` means at least two competitors were measured successfully. Exit `1` means
 an attempted execution failed and invalidated the comparison. Exit `2` means the race
@@ -427,7 +433,7 @@ llmrig/
 
 ## Roadmap
 
-The roadmap is intentionally community-driven. Likely directions include support for more model families, multiple local inference runtimes, richer GPU detection, benchmark leaderboards, and standardized community hardware reports.
+The roadmap is intentionally community-driven. Credible next directions include additional model families; llama.cpp, MLX-LM, and other execution adapters; richer GPU and runtime support; explainable comparison and decision intelligence; Pareto-style configuration optimization; and standardized privacy-safe benchmark sharing.
 
 The rule for new functionality is simple: **be useful, be reproducible, and do not turn unverified discovery metadata into an automatic install decision.**
 
