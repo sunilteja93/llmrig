@@ -1675,5 +1675,67 @@ class LLMRigTests(unittest.TestCase):
             self.assertEqual(payload["model"]["artifact_fingerprint"], "digest")
             self.assertEqual(llmrig.validate_passport(payload), [])
 
+    def test_bench_passport_timeout_matches_actual_measured_execution(self):
+        response = {
+            "response": "391",
+            "eval_count": 40,
+            "eval_duration": 1_000_000_000,
+            "prompt_eval_count": 10,
+            "prompt_eval_duration": 500_000_000,
+            "total_duration": 2_000_000_000,
+        }
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            llmrig, "ensure_ollama_service", return_value=True
+        ), mock.patch.object(
+            llmrig, "isolate_ollama_for_benchmark", return_value=[]
+        ), mock.patch.object(
+            llmrig, "ollama_generate", return_value=response
+        ) as generate, mock.patch.object(
+            llmrig, "unload_ollama_model", return_value=True
+        ), mock.patch.object(
+            llmrig, "memory_snapshot", return_value={}
+        ), mock.patch.object(
+            llmrig, "running_model_details", return_value={}
+        ), mock.patch.object(
+            llmrig, "shareable_hardware_profile", return_value={}
+        ), mock.patch.object(
+            llmrig, "shareable_ollama_info", return_value={}
+        ), contextlib.redirect_stdout(io.StringIO()):
+            result = llmrig.run_benchmark(
+                "qwen3.8:27b-mlx", 4096, 1, output_dir=Path(directory)
+            )
+        passport = llmrig.passport_from_benchmark_result(result).to_dict()
+        timed_call = next(
+            call for call in generate.call_args_list if call.args[2] == llmrig.SPEED_PROMPT
+        )
+        self.assertEqual(
+            timed_call.kwargs["timeout"], passport["workload"]["timeout_s"]
+        )
+        self.assertEqual(passport["workload"]["timeout_s"], llmrig.BENCH_REQUEST_TIMEOUT)
+
+    def test_exported_race_passport_normalizes_and_validates_phase5_hardware(self):
+        raw = (
+            {"generation_tps": 40.0, "prompt_tps": 80.0, "wall_seconds": 2.0, "total_duration_s": 1.9, "eval_count": 100},
+            {"generation_tps": 60.0, "prompt_tps": 90.0, "wall_seconds": 1.5, "total_duration_s": 1.4, "eval_count": 100},
+        )
+        competitor = llmrig.replace(self.race_competitor(), raw_samples=raw)
+        hardware = {
+            "os": "Darwin", "arch": "arm64", "cpu": "Apple Test Chip",
+            "ram_gib": 48.0, "accelerator": "Metal test accelerator",
+        }
+        race = llmrig.RaceResult(
+            "completed", "logical/model", None, llmrig.RACE_METHOD_VERSION,
+            "fixed", self.race_workload(), hardware, (), (), (competitor,),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            paths = llmrig.export_race_passports(race, Path(directory))
+            self.assertEqual(len(paths), 1)
+            document = json.loads(paths[0].read_text())
+        self.assertEqual(
+            document["hardware"],
+            {"os": "Darwin", "architecture": "arm64", "cpu_or_chip": "Apple Test Chip", "ram_gib": 48.0, "accelerator": "Metal test accelerator"},
+        )
+        self.assertEqual(llmrig.validate_passport(document), [])
+
 if __name__ == "__main__":
     unittest.main()

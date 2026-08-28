@@ -39,6 +39,7 @@ RACE_NUM_PREDICT = 128
 RACE_NOISE_THRESHOLD = 0.05
 PASSPORT_SCHEMA_VERSION = "1.0"
 BENCHMARK_METHOD_VERSION = "ollama-bench-v1"
+BENCH_REQUEST_TIMEOUT = 600
 
 OFFICIAL = "official"
 REDUCED_REFUSAL = "community-reduced-refusal"
@@ -3232,7 +3233,7 @@ def ollama_generate(
     context: int,
     num_predict: int,
     think: bool = False,
-    timeout: int = 600,
+    timeout: int = BENCH_REQUEST_TIMEOUT,
 ) -> Dict[str, Any]:
     payload = {
         "model": model,
@@ -3422,10 +3423,10 @@ def passport_hardware(profile: Dict[str, Any]) -> Dict[str, Any]:
     """Select only benchmark-relevant, privacy-safe hardware facts."""
     return {
         "os": profile.get("os") or profile.get("platform"),
-        "architecture": profile.get("arch"),
-        "cpu_or_chip": profile.get("cpu"),
+        "architecture": profile.get("architecture") or profile.get("arch"),
+        "cpu_or_chip": profile.get("cpu_or_chip") or profile.get("cpu"),
         "ram_gib": profile.get("ram_gib"),
-        "accelerator": accelerator_summary(profile),
+        "accelerator": profile.get("accelerator") or accelerator_summary(profile),
     }
 
 
@@ -3595,7 +3596,7 @@ def passport_from_benchmark_result(result: Dict[str, Any]) -> BenchmarkPassport:
         "warmup_count": 1,
         "warmup_token_cap": 64,
         "measured_run_count": len(result.get("throughput_runs") or []),
-        "timeout_s": 120,
+        "timeout_s": BENCH_REQUEST_TIMEOUT,
         "other_generation_settings": {},
     }
     ollama = result.get("ollama") or {}
@@ -3625,8 +3626,10 @@ def passport_from_race_competitor(
     workload.update(
         {
             "requested_context": workload.pop("context"),
-            "measured_run_count": competitor.measured_runs,
+            "measured_run_count": workload.pop("runs"),
             "timeout_s": workload.pop("request_timeout_s"),
+            "warmup_count": workload.pop("warmup_runs"),
+            "warmup_token_cap": workload.pop("warmup_num_predict"),
             "think": False,
             "other_generation_settings": {},
         }
@@ -3642,7 +3645,7 @@ def passport_from_race_competitor(
         runtime=competitor.runtime,
         runtime_version=competitor.runtime_version,
         adapter=f"{competitor.runtime}-race-adapter",
-        hardware=dict(result.hardware),
+        hardware=passport_hardware(result.hardware),
         workload=workload,
         raw_samples=competitor.raw_samples,
         execution_status=competitor.execution_status,
@@ -3763,6 +3766,8 @@ def validate_passport(document: Dict[str, Any]) -> List[str]:
     if status == "success":
         if not samples or measurement.get("measured_run_count") != len(samples):
             errors.append("successful benchmark requires matching nonzero measured runs")
+        if document["workload"].get("measured_run_count") != len(samples):
+            errors.append("workload measured-run count does not match raw samples")
         if not invalid_sample:
             expected = aggregate_passport_samples(samples)
             if aggregates != expected:
@@ -3831,6 +3836,7 @@ def run_benchmark(
             context,
             64,
             think=False,
+            timeout=BENCH_REQUEST_TIMEOUT,
         )
 
         for index in range(max(1, runs)):
@@ -3843,6 +3849,7 @@ def run_benchmark(
                 context,
                 640,
                 think=False,
+                timeout=BENCH_REQUEST_TIMEOUT,
             )
             metrics = speed_metrics(response)
             metrics["wall_seconds"] = round(time.perf_counter() - started, 4)
@@ -3857,6 +3864,7 @@ def run_benchmark(
                 min(context, 32_768),
                 48,
                 think=False,
+                timeout=BENCH_REQUEST_TIMEOUT,
             )
             text = str(response.get("response") or "").strip()
             passed = bool(check(text))
