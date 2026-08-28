@@ -241,7 +241,8 @@ One model:
 llmrig bench \
   --model qwen3.8:27b-mlx \
   --context 32768 \
-  --runs 2
+  --runs 2 \
+  --passport benchmark.passport.json
 ```
 
 All installed supported Qwen models:
@@ -254,6 +255,52 @@ llmrig bench \
 ```
 
 LLMRig deduplicates installed aliases that resolve to the same Ollama model ID.
+
+### Benchmark passports
+
+A benchmark passport is a versioned, privacy-safe JSON record of one measured
+execution configuration. It records the exact model/build, runtime, safe hardware
+summary, applied workload, individual timed samples, reproducible aggregates, and
+evidence provenance. Use `bench --passport FILE` for a single model, or
+`race --passport-dir DIR` to export each successfully measured race competitor.
+
+Validate a passport locally without network access or inference:
+
+```bash
+llmrig passport verify benchmark.passport.json
+```
+
+Verification checks the schema, SHA-256 identity and configuration fingerprints,
+raw-sample aggregates, impossible states, and privacy constraints. It establishes
+only that the document is internally consistent according to LLMRig's schema. The
+hashes are identifiers and integrity checks, not signatures, independent proof, or
+benchmark certification.
+
+`passport_id` is the SHA-256 hash of canonical passport content with `passport_id`
+itself excluded. It identifies the exact record, including its timestamp and
+measurements. `configuration_fingerprint` hashes the logical model, exact
+artifact/build, artifact digest, format, quantization, runtime and version, execution
+adapter, privacy-safe hardware facts, exact workload and generation settings, and
+benchmark method version. It excludes the passport ID, timestamp, measurements,
+aggregates, run-only warnings, and output path. The LLMRig tool version is record
+metadata; the benchmark method version is the compatibility boundary and must change
+when the procedure changes.
+
+Two passports are `exact` when their configuration fingerprints match, even though
+their passport IDs and measured results may differ. `comparable_with_warnings` means
+the logical model and workload match but artifact, format, quantization, runtime,
+runtime version, or hardware differs. `not_comparable` means the logical model or
+workload—including context—differs. These classifications do not rank results.
+
+Race passports are exported only when the overall race completes successfully. If
+any intended competitor fails, the race remains failed and `--passport-dir` writes
+no standalone competitor passports that could hide the incomplete comparison.
+
+Passport aggregates are derived only from the recorded timed-run samples. Throughput
+means are rounded to two decimal places, wall-latency means to four decimal places,
+using Python's deterministic `round` behavior; generated tokens are the sum of the
+runtime-reported per-run counts. Warmups are recorded as policy metadata and never
+enter samples or aggregates.
 
 ### Run project checks
 
