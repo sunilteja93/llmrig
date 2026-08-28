@@ -229,6 +229,61 @@ for measured generation throughput, prompt-evaluation throughput, and normalized
 is no composite score or model-quality claim. Results within 5% are treated as
 inconclusive, and at least two timed runs per competitor are required for a winner.
 
+### Explain a measured decision
+
+```bash
+llmrig choose <model>
+llmrig choose <model> --objective generation
+llmrig choose <model> --objective prompt --json
+llmrig choose <model> --objective latency
+llmrig choose <model> --objective balanced
+```
+
+`choose` executes the same local comparison as `race`, then explains a decision for
+one explicit objective. Generation, prompt, and latency decisions reuse the existing
+metric-specific race results, including the two-sample requirement and 5% noise
+threshold. The default `balanced` objective is not a weighted score: it recommends a
+configuration only when exactly one configuration remains on the measured-performance
+Pareto frontier. Multiple frontier members make the decision genuinely inconclusive.
+Race warnings about quantization, artifact equivalence, formats, tokenization, early
+EOS, and user-supplied associations remain visible as caveats.
+
+Exit `0` means a defensible recommendation was produced, exit `1` means race execution
+failed, and exit `2` means the decision is unavailable or inconclusive. `choose` never
+writes benchmark passports.
+
+### Optimize measured performance
+
+```bash
+llmrig optimize <model>
+llmrig optimize <model> --json
+```
+
+`optimize` exposes an unranked, noise-aware Pareto frontier over measurements from the
+same local race path. The current dimensions are generation throughput and prompt-
+evaluation throughput (maximized), plus normalized inference latency (minimized).
+This is a **measured-performance frontier**, not a universal model-quality frontier.
+Memory is not yet a cross-runtime Pareto dimension, context is held constant by the
+race workload, and LLMRig does not infer quality, accuracy, or reasoning from speed.
+LLMRig does not create a universal runtime/model score.
+
+A dimension participates only when every successful competitor has at least two valid
+measured samples and a positive finite value for it. Missing, invalid, or non-finite
+values are never treated as zero or as bad; the dimension is omitted globally and
+reported. Fewer than two remaining dimensions makes optimization inconclusive. One configuration dominates another only when it is
+not materially worse on every active dimension and is materially better on at least
+one, with differences within 5% treated as effectively tied. There is no composite
+score and frontier members are not ranked. Measured evidence takes precedence, and
+multiple frontier members mean the performance tradeoff remains unresolved.
+
+Exit `0` means a valid frontier was derived from a completed race, exit `1` means race
+execution failed, and exit `2` means optimization is unavailable or inconclusive.
+`optimize` never writes benchmark passports.
+
+In short: `race` measures, `choose` explains a decision for an explicit objective, and
+`optimize` exposes the measured-performance Pareto frontier. All three accept the same
+local race inputs; none downloads models or installs runtimes.
+
 ### List models
 
 Show curated local-ready models plus the newest live Qwen LLM/multimodal candidates:

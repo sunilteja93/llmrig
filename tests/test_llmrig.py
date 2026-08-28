@@ -2356,5 +2356,284 @@ class LLMRigTests(unittest.TestCase):
         self.assertTrue(any("tokenization-equivalent" in warning for warning in result.warnings))
         self.assertTrue(any("early EOS" in warning for warning in result.warnings))
 
+    def analysis_race(self, competitors, status="completed", warnings=()):
+        winners = ()
+        if status == "completed":
+            winners = (
+                ("fastest_generation", llmrig.metric_winner(competitors, "generation_tps", True)),
+                ("fastest_prompt_evaluation", llmrig.metric_winner(competitors, "prompt_eval_tps", True)),
+                ("lowest_latency", llmrig.metric_winner(competitors, "total_latency_s", False)),
+            )
+        return llmrig.RaceResult(
+            status, "logical/model", None if status == "completed" else "race unavailable",
+            llmrig.RACE_METHOD_VERSION, "fixed", self.race_workload(), {}, (), (),
+            tuple(competitors), tuple(warnings), winners,
+        )
+
+    def test_decision_metric_objectives_reuse_race_winners(self):
+        competitors = (
+            self.race_competitor("a", "a", generation=80, prompt=100, latency=3),
+            self.race_competitor("b", "b", generation=50, prompt=160, latency=1),
+        )
+        race = self.analysis_race(competitors)
+        expected = {"generation": "a", "prompt": "b", "latency": "b"}
+        for objective, runtime in expected.items():
+            with self.subTest(objective=objective):
+                decision = llmrig.analyze_decision(race, objective)
+                self.assertEqual(decision.status, "recommended")
+                self.assertEqual(decision.preferred.runtime, runtime)
+
+    def test_decision_near_tie_and_insufficient_samples_stay_inconclusive(self):
+        near = self.analysis_race((
+            self.race_competitor("a", "a", generation=100),
+            self.race_competitor("b", "b", generation=96),
+        ))
+        short = self.analysis_race((
+            self.race_competitor("a", "a", generation=100, runs=1),
+            self.race_competitor("b", "b", generation=80, runs=1),
+        ))
+        self.assertEqual(llmrig.analyze_decision(near, "generation").status, "inconclusive")
+        self.assertEqual(llmrig.analyze_decision(short, "generation").status, "inconclusive")
+
+    def test_failed_and_unavailable_races_never_produce_decisions(self):
+        competitors = (self.race_competitor("a", "a"), self.race_competitor("b", "b"))
+        for status in ("failed", "unavailable"):
+            decision = llmrig.analyze_decision(self.analysis_race(competitors, status), "generation")
+            self.assertEqual(decision.status, "unavailable")
+            self.assertIsNone(decision.preferred)
+
+    def test_decision_propagates_warnings_and_avoids_quality_claims(self):
+        warning = "artifact equivalence cannot be established"
+        race = self.analysis_race((
+            self.race_competitor("a", "a", generation=100),
+            self.race_competitor("b", "b", generation=50),
+        ), warnings=(warning,))
+        payload = json.dumps(llmrig.analyze_decision(race, "generation").to_dict())
+        self.assertIn(warning, payload)
+        self.assertNotIn("model quality", payload.lower())
+        self.assertNotIn("best overall", payload.lower())
+
+    def test_pareto_obvious_dominance_and_unique_balanced_leader(self):
+        race = self.analysis_race((
+            self.race_competitor("leader", "x", generation=100, prompt=200, latency=1),
+            self.race_competitor("other", "y", generation=70, prompt=150, latency=2),
+        ))
+        pareto = llmrig.analyze_pareto(race)
+        self.assertEqual([entry.configuration.runtime for entry in pareto.frontier], ["leader"])
+        self.assertEqual(pareto.dominated[0].dominated_by, (("leader", "x"),))
+        decision = llmrig.analyze_decision(race, "balanced")
+        self.assertEqual(decision.status, "recommended")
+        self.assertEqual(decision.preferred.runtime, "leader")
+
+    def test_pareto_tradeoffs_are_all_nondominated_and_balanced_is_inconclusive(self):
+        race = self.analysis_race((
+            self.race_competitor("gen", "a", generation=120, prompt=80, latency=2),
+            self.race_competitor("prompt", "b", generation=80, prompt=120, latency=2),
+            self.race_competitor("latency", "c", generation=80, prompt=80, latency=1),
+        ))
+        pareto = llmrig.analyze_pareto(race)
+        self.assertEqual(len(pareto.frontier), 3)
+        self.assertFalse(pareto.dominated)
+        decision = llmrig.analyze_decision(race, "balanced")
+        self.assertEqual(decision.status, "inconclusive")
+        self.assertIsNone(decision.preferred)
+
+    def test_pareto_noise_threshold_is_symmetric_and_strict(self):
+        self.assertEqual(llmrig.materially_compare(105, 100, True), 0)
+        self.assertEqual(llmrig.materially_compare(100, 105, True), 0)
+        self.assertEqual(llmrig.materially_compare(106, 100, True), 1)
+        self.assertEqual(llmrig.materially_compare(0.94, 1.0, False), 1)
+        tied = self.analysis_race((
+            self.race_competitor("a", "a", generation=105, prompt=105, latency=.95),
+            self.race_competitor("b", "b", generation=100, prompt=100, latency=1),
+        ))
+        self.assertEqual(len(llmrig.analyze_pareto(tied).frontier), 2)
+
+    def test_material_comparison_exact_five_percent_boundaries(self):
+        for a, b, expected in ((100, 95, 0), (100, 94.999, 1), (95, 100, 0), (94.999, 100, -1)):
+            with self.subTest(direction="maximize", a=a, b=b):
+                self.assertEqual(llmrig.materially_compare(a, b, True), expected)
+            with self.subTest(direction="latency", a=a, b=b):
+                self.assertEqual(llmrig.materially_compare(a, b, False), -expected)
+
+    def test_pareto_respects_maximize_and_minimize_dimensions(self):
+        base = self.race_competitor("base", "base", generation=100, prompt=100, latency=2)
+        for field, value in (("generation_tps", 120), ("prompt_eval_tps", 120), ("total_latency_s", 1)):
+            better = llmrig.replace(base, runtime=field, artifact_id=field, **{field: value})
+            race = self.analysis_race((base, better))
+            self.assertEqual(llmrig.analyze_pareto(race).frontier[0].configuration.runtime, field)
+
+    def test_pareto_missing_metric_is_omitted_globally_not_zero(self):
+        race = self.analysis_race((
+            self.race_competitor("a", "a", generation=None, prompt=100, latency=1),
+            self.race_competitor("b", "b", generation=100, prompt=80, latency=2),
+        ))
+        result = llmrig.analyze_pareto(race)
+        self.assertNotIn("generation_tps", result.active_dimensions)
+        self.assertIn("prompt_eval_tps", result.active_dimensions)
+        self.assertEqual(result.status, "completed")
+
+    def test_pareto_fewer_than_two_dimensions_or_competitors_is_unavailable(self):
+        sparse = (
+            llmrig.replace(self.race_competitor("a", "a"), generation_tps=None, generation_samples=0, prompt_eval_tps=None, prompt_eval_samples=0),
+            llmrig.replace(self.race_competitor("b", "b"), generation_tps=None, generation_samples=0, prompt_eval_tps=None, prompt_eval_samples=0),
+        )
+        self.assertEqual(llmrig.analyze_pareto(self.analysis_race(sparse)).status, "inconclusive")
+        self.assertEqual(llmrig.analyze_pareto(self.analysis_race((sparse[0],))).status, "unavailable")
+
+    def test_pareto_failed_race_is_unavailable_and_propagates_warnings(self):
+        warning = "tokenization differences"
+        race = self.analysis_race((self.race_competitor(),), "failed", (warning,))
+        result = llmrig.analyze_pareto(race)
+        self.assertEqual(result.status, "unavailable")
+        self.assertIn(warning, result.warnings)
+
+    def test_analysis_json_is_deterministic_structured_and_private(self):
+        private_values = (
+            "/Users/private-user/Secret Models/model.gguf",
+            r"C:\Users\private\model.gguf",
+            "C:/Users/private/model.gguf",
+            r"\\server\private\model.gguf",
+            "~/Secret Models/model.gguf",
+            "./private/model.gguf",
+            "../private/model.gguf",
+            "file:///Users/private/model.gguf",
+        )
+        for private in private_values:
+            with self.subTest(private=private):
+                race = self.analysis_race((
+                    self.race_competitor("private", private, generation=100),
+                    self.race_competitor("safe", "org/model", generation=80),
+                ))
+                pareto = llmrig.analyze_pareto(race)
+                decision = llmrig.analyze_decision(race, "generation")
+                for result in (pareto, decision):
+                    first = json.dumps(result.to_dict(), sort_keys=True, allow_nan=False)
+                    second = json.dumps(result.to_dict(), sort_keys=True, allow_nan=False)
+                    self.assertEqual(first, second)
+                    self.assertNotIn(private, first)
+                    self.assertNotIn("ExecutionTarget", first)
+                    self.assertNotIn("composite_score", first)
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    llmrig.print_pareto_result(pareto)
+                    llmrig.print_decision_result(decision)
+                self.assertNotIn(private, output.getvalue())
+
+    def test_analysis_preserves_public_artifact_ids(self):
+        for artifact_id in ("qwen3.8:27b-mlx", "org/model", "local:mlx-lm:user-supplied"):
+            with self.subTest(artifact_id=artifact_id):
+                item = self.race_competitor("mlx-lm", artifact_id)
+                self.assertEqual(llmrig.analysis_configuration(item).artifact_id, artifact_id)
+
+    def test_pareto_omits_nonpositive_and_nonfinite_dimensions_globally(self):
+        fields = ("generation_tps", "prompt_eval_tps", "total_latency_s")
+        invalid_values = (float("nan"), float("inf"), float("-inf"), 0.0, -1.0)
+        for field in fields:
+            for invalid in invalid_values:
+                with self.subTest(field=field, invalid=invalid):
+                    first = self.race_competitor("a", "a", generation=100, prompt=100, latency=1)
+                    second = self.race_competitor("b", "b", generation=80, prompt=80, latency=2)
+                    first = llmrig.replace(first, **{field: invalid})
+                    race = self.analysis_race((first, second))
+                    result = llmrig.analyze_pareto(race)
+                    self.assertNotIn(field, result.active_dimensions)
+                    self.assertFalse(any(
+                        field in entry.dominance_details
+                        for entry in result.dominated
+                    ))
+                    json.dumps(result.to_dict(), sort_keys=True, allow_nan=False)
+                    decision = llmrig.analyze_decision(race, "balanced")
+                    json.dumps(decision.to_dict(), sort_keys=True, allow_nan=False)
+                    objective = {
+                        "generation_tps": "generation",
+                        "prompt_eval_tps": "prompt",
+                        "total_latency_s": "latency",
+                    }[field]
+                    metric_decision = llmrig.analyze_decision(race, objective)
+                    json.dumps(metric_decision.to_dict(), sort_keys=True, allow_nan=False)
+                    if len(result.active_dimensions) < 2:
+                        self.assertNotEqual(result.status, "completed")
+                        self.assertNotEqual(decision.status, "recommended")
+
+        sparse_invalid = (
+            llmrig.replace(
+                self.race_competitor("a", "a"),
+                generation_tps=float("nan"), prompt_eval_tps=0.0,
+            ),
+            self.race_competitor("b", "b"),
+        )
+        sparse_race = self.analysis_race(sparse_invalid)
+        sparse_result = llmrig.analyze_pareto(sparse_race)
+        sparse_decision = llmrig.analyze_decision(sparse_race, "balanced")
+        self.assertEqual(sparse_result.active_dimensions, ("total_latency_s",))
+        self.assertEqual(sparse_result.status, "inconclusive")
+        self.assertNotEqual(sparse_decision.status, "recommended")
+        json.dumps(sparse_result.to_dict(), sort_keys=True, allow_nan=False)
+        json.dumps(sparse_decision.to_dict(), sort_keys=True, allow_nan=False)
+
+    def test_material_comparison_invalid_values_are_noncomparable(self):
+        for invalid in (float("nan"), float("inf"), float("-inf"), 0.0, -1.0):
+            with self.subTest(invalid=invalid):
+                self.assertEqual(llmrig.materially_compare(invalid, 1.0, True), 0)
+                self.assertEqual(llmrig.materially_compare(1.0, invalid, False), 0)
+
+    def test_analysis_frontier_order_is_deterministic(self):
+        competitors = (
+            self.race_competitor("z", "z", generation=120, prompt=80, latency=2),
+            self.race_competitor("a", "a", generation=80, prompt=120, latency=1),
+        )
+        forward = llmrig.analyze_pareto(self.analysis_race(competitors)).to_dict()
+        reverse = llmrig.analyze_pareto(self.analysis_race(tuple(reversed(competitors)))).to_dict()
+        self.assertEqual(forward, reverse)
+
+    def test_choose_and_optimize_exit_codes_use_mocked_race(self):
+        completed = self.analysis_race((
+            self.race_competitor("a", "a", generation=100, prompt=100, latency=1),
+            self.race_competitor("b", "b", generation=50, prompt=50, latency=2),
+        ))
+        args = llmrig.argparse.Namespace(objective="generation", json=True)
+        with mock.patch.object(llmrig, "execute_race_from_args", return_value=completed), contextlib.redirect_stdout(io.StringIO()):
+            for objective in ("generation", "prompt", "latency", "balanced"):
+                args.objective = objective
+                self.assertEqual(llmrig.command_choose(args), 0)
+            self.assertEqual(llmrig.command_optimize(args), 0)
+        failed = llmrig.replace(completed, status="failed", reason="failed", winners=())
+        with mock.patch.object(llmrig, "execute_race_from_args", return_value=failed), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(llmrig.command_choose(args), 1)
+            self.assertEqual(llmrig.command_optimize(args), 1)
+
+        unavailable = self.analysis_race((), status="unavailable")
+        with mock.patch.object(llmrig, "execute_race_from_args", return_value=unavailable), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(llmrig.command_choose(args), 2)
+            self.assertEqual(llmrig.command_optimize(args), 2)
+
+        inconclusive = self.analysis_race((
+            self.race_competitor("a", "a", generation=100, prompt=100, latency=1),
+            self.race_competitor("b", "b", generation=96, prompt=96, latency=1.04),
+        ))
+        with mock.patch.object(llmrig, "execute_race_from_args", return_value=inconclusive), contextlib.redirect_stdout(io.StringIO()):
+            args.objective = "generation"
+            self.assertEqual(llmrig.command_choose(args), 2)
+            args.objective = "balanced"
+            self.assertEqual(llmrig.command_choose(args), 2)
+
+        one_competitor = self.analysis_race((self.race_competitor("a", "a"),))
+        sparse = self.analysis_race((
+            llmrig.replace(self.race_competitor("a", "a"), generation_tps=None, generation_samples=0, prompt_eval_tps=None, prompt_eval_samples=0),
+            llmrig.replace(self.race_competitor("b", "b"), generation_tps=None, generation_samples=0, prompt_eval_tps=None, prompt_eval_samples=0),
+        ))
+        for race in (one_competitor, sparse):
+            with self.subTest(optimize_status=race.status), mock.patch.object(llmrig, "execute_race_from_args", return_value=race), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(llmrig.command_optimize(args), 2)
+
+    def test_analysis_cli_parser_matches_race_local_artifact_inputs(self):
+        parser = llmrig.build_parser()
+        for command in ("race", "choose", "optimize"):
+            args = parser.parse_args([command, "org/model", "--local-artifact", "llama.cpp=/tmp/a=b.gguf"])
+            self.assertEqual(args.local_artifact, ["llama.cpp=/tmp/a=b.gguf"])
+        self.assertEqual(parser.parse_args(["choose", "org/model"]).objective, "balanced")
+
+
 if __name__ == "__main__":
     unittest.main()
