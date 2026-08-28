@@ -420,6 +420,124 @@ class RaceResult:
 
 
 @dataclass(frozen=True)
+class AnalysisConfiguration:
+    """Privacy-safe identity and measurements used by derived race analysis."""
+
+    runtime: str
+    artifact_id: str
+    artifact_format: str
+    quantization: Optional[str]
+    generation_tps: Optional[float]
+    prompt_eval_tps: Optional[float]
+    total_latency_s: Optional[float]
+    measured_runs: int
+
+    @property
+    def identity(self) -> Tuple[str, str]:
+        return (self.runtime, self.artifact_id)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "runtime": self.runtime,
+            "artifact_id": self.artifact_id,
+            "artifact_format": self.artifact_format,
+            "quantization": self.quantization,
+            "metrics": {
+                "generation_tps": self.generation_tps,
+                "prompt_eval_tps": self.prompt_eval_tps,
+                "total_latency_s": self.total_latency_s,
+            },
+            "measured_runs": self.measured_runs,
+        }
+
+
+@dataclass(frozen=True)
+class ParetoEntry:
+    """One measured configuration and its noise-aware dominance evidence."""
+
+    configuration: AnalysisConfiguration
+    labels: Tuple[str, ...] = ()
+    dominated_by: Tuple[Tuple[str, str], ...] = ()
+    dominance_details: Tuple[str, ...] = ()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "configuration": self.configuration.to_dict(),
+            "labels": list(self.labels),
+            "dominated_by": [
+                {"runtime": runtime, "artifact_id": artifact}
+                for runtime, artifact in self.dominated_by
+            ],
+            "dominance_details": list(self.dominance_details),
+        }
+
+
+@dataclass(frozen=True)
+class ParetoResult:
+    """Derived measured-performance frontier; never a composite ranking."""
+
+    status: str
+    logical_model_id: str
+    reason: Optional[str]
+    method_version: str
+    active_dimensions: Tuple[str, ...]
+    omitted_dimensions: Tuple[Tuple[str, str], ...]
+    frontier: Tuple[ParetoEntry, ...] = ()
+    dominated: Tuple[ParetoEntry, ...] = ()
+    rationale: Tuple[str, ...] = ()
+    warnings: Tuple[str, ...] = ()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "status": self.status,
+            "logical_model_id": self.logical_model_id,
+            "reason": self.reason,
+            "method_version": self.method_version,
+            "active_dimensions": list(self.active_dimensions),
+            "omitted_dimensions": [
+                {"dimension": dimension, "reason": reason}
+                for dimension, reason in self.omitted_dimensions
+            ],
+            "frontier": [entry.to_dict() for entry in self.frontier],
+            "dominated": [entry.to_dict() for entry in self.dominated],
+            "rationale": list(self.rationale),
+            "warnings": list(self.warnings),
+        }
+
+
+@dataclass(frozen=True)
+class DecisionResult:
+    """Evidence-driven decision derived from one existing RaceResult."""
+
+    status: str
+    objective: str
+    logical_model_id: str
+    reason: Optional[str]
+    preferred: Optional[AnalysisConfiguration]
+    metric: Optional[str]
+    value: Optional[float]
+    rationale: Tuple[str, ...]
+    caveats: Tuple[str, ...]
+    evidence_basis: Tuple[str, ...]
+    tradeoffs: Tuple[ParetoEntry, ...] = ()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "status": self.status,
+            "objective": self.objective,
+            "logical_model_id": self.logical_model_id,
+            "reason": self.reason,
+            "preferred": self.preferred.to_dict() if self.preferred else None,
+            "metric": self.metric,
+            "value": self.value,
+            "rationale": list(self.rationale),
+            "caveats": list(self.caveats),
+            "evidence_basis": list(self.evidence_basis),
+            "tradeoffs": [entry.to_dict() for entry in self.tradeoffs],
+        }
+
+
+@dataclass(frozen=True)
 class BenchmarkPassport:
     """Portable record of one measured execution, not an attestation."""
 
@@ -4575,6 +4693,252 @@ def metric_winner(
     }
 
 
+PARETO_DIMENSIONS: Tuple[Tuple[str, str, bool], ...] = (
+    ("generation_tps", "generation throughput", True),
+    ("prompt_eval_tps", "prompt evaluation throughput", True),
+    ("total_latency_s", "normalized inference latency", False),
+)
+
+
+def privacy_safe_analysis_artifact_id(runtime: str, artifact_id: str) -> str:
+    """Keep public artifact IDs while categorically replacing path-shaped values."""
+    value = str(artifact_id)
+    path_candidate = value.lstrip()
+    lowered = path_candidate.lower()
+    path_shaped = (
+        lowered.startswith("file:")
+        or path_candidate.startswith(("/", "\\\\", "~/", "~\\", "./", ".\\", "../", "..\\"))
+        or re.match(r"^[A-Za-z]:[\\/]", path_candidate) is not None
+    )
+    if path_shaped:
+        return f"local:{runtime}:private-artifact"
+    return value
+
+
+def valid_analysis_measurement(value: Any) -> bool:
+    """A measured performance value must be numeric, finite, and positive."""
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(float(value))
+        and float(value) > 0.0
+    )
+
+
+def analysis_configuration(item: RaceCompetitor) -> AnalysisConfiguration:
+    return AnalysisConfiguration(
+        item.runtime,
+        privacy_safe_analysis_artifact_id(item.runtime, item.artifact_id),
+        item.artifact_format,
+        item.quantization,
+        item.generation_tps if valid_analysis_measurement(item.generation_tps) else None,
+        item.prompt_eval_tps if valid_analysis_measurement(item.prompt_eval_tps) else None,
+        item.total_latency_s if valid_analysis_measurement(item.total_latency_s) else None,
+        item.measured_runs,
+    )
+
+
+def materially_compare(a: float, b: float, higher_is_better: bool) -> int:
+    """Compare positive finite measurements; invalid values are non-comparable."""
+    if not valid_analysis_measurement(a) or not valid_analysis_measurement(b):
+        return 0
+    scale = max(abs(float(a)), abs(float(b)), 1e-12)
+    delta = (float(a) - float(b)) if higher_is_better else (float(b) - float(a))
+    relative = delta / scale
+    if abs(relative) <= RACE_NOISE_THRESHOLD or math.isclose(
+        abs(relative), RACE_NOISE_THRESHOLD, rel_tol=1e-12, abs_tol=1e-12
+    ):
+        return 0
+    if relative > RACE_NOISE_THRESHOLD:
+        return 1
+    if relative < -RACE_NOISE_THRESHOLD:
+        return -1
+    return 0
+
+
+def analyze_pareto(race: RaceResult) -> ParetoResult:
+    """Derive a deterministic, noise-aware frontier without rerunning a race."""
+    if race.status != "completed":
+        return ParetoResult(
+            "unavailable", race.logical_model_id,
+            race.reason or f"race status is {race.status}", race.method_version,
+            (), tuple((name, "race is not completed") for name, _, _ in PARETO_DIMENSIONS),
+            warnings=race.warnings,
+        )
+    competitors = tuple(sorted(
+        (item for item in race.competitors if item.execution_status == "success"),
+        key=lambda item: (item.runtime, item.artifact_id),
+    ))
+    if len(competitors) < 2:
+        return ParetoResult(
+            "unavailable", race.logical_model_id,
+            "fewer than two successfully measured competitors", race.method_version,
+            (), tuple((name, "fewer than two competitors") for name, _, _ in PARETO_DIMENSIONS),
+            warnings=race.warnings,
+        )
+    sample_fields = {
+        "generation_tps": "generation_samples",
+        "prompt_eval_tps": "prompt_eval_samples",
+        "total_latency_s": "latency_samples",
+    }
+    active = []
+    omitted = []
+    for attribute, _label, _higher in PARETO_DIMENSIONS:
+        if any(not valid_analysis_measurement(getattr(item, attribute)) for item in competitors):
+            omitted.append((attribute, "valid positive finite measured evidence is unavailable for one or more competitors"))
+        elif any(getattr(item, sample_fields[attribute]) < 2 for item in competitors):
+            omitted.append((attribute, "fewer than two valid samples for one or more competitors"))
+        else:
+            active.append(attribute)
+    if len(active) < 2:
+        return ParetoResult(
+            "inconclusive", race.logical_model_id,
+            "fewer than two comparable measured dimensions remain", race.method_version,
+            tuple(active), tuple(omitted), warnings=race.warnings,
+        )
+    dimension_map = {name: (label, higher) for name, label, higher in PARETO_DIMENSIONS}
+    dominators: Dict[Tuple[str, str], List[Tuple[RaceCompetitor, Tuple[str, ...]]]] = {
+        (item.runtime, item.artifact_id): [] for item in competitors
+    }
+    for candidate in competitors:
+        for other in competitors:
+            if other is candidate:
+                continue
+            comparisons = []
+            for dimension in active:
+                _label, higher = dimension_map[dimension]
+                comparisons.append((dimension, materially_compare(
+                    float(getattr(other, dimension)),
+                    float(getattr(candidate, dimension)), higher,
+                )))
+            if all(value >= 0 for _, value in comparisons) and any(
+                value > 0 for _, value in comparisons
+            ):
+                details = tuple(
+                    f"{dimension_map[name][0]}: "
+                    + ("materially better" if value > 0 else "effectively tied")
+                    for name, value in comparisons
+                )
+                dominators[(candidate.runtime, candidate.artifact_id)].append((other, details))
+    winner_labels = {
+        "fastest_generation": "best_generation",
+        "fastest_prompt_evaluation": "best_prompt_evaluation",
+        "lowest_latency": "lowest_latency",
+    }
+    winners = dict(race.winners)
+    entries = []
+    for item in competitors:
+        identity = (item.runtime, item.artifact_id)
+        labels = tuple(
+            label for metric, label in winner_labels.items()
+            if winners.get(metric, {}).get("status") == "winner"
+            and (winners[metric].get("runtime"), winners[metric].get("artifact_id")) == identity
+        )
+        by = tuple(sorted(
+            ((other.runtime, privacy_safe_analysis_artifact_id(other.runtime, other.artifact_id))
+             for other, _ in dominators[identity])
+        ))
+        details = tuple(
+            f"dominated by {other.runtime} / "
+            f"{privacy_safe_analysis_artifact_id(other.runtime, other.artifact_id)}: "
+            + "; ".join(reasons)
+            for other, reasons in sorted(
+                dominators[identity], key=lambda pair: (pair[0].runtime, pair[0].artifact_id)
+            )
+        )
+        entries.append(ParetoEntry(analysis_configuration(item), labels, by, details))
+    frontier = tuple(entry for entry in entries if not entry.dominated_by)
+    dominated = tuple(entry for entry in entries if entry.dominated_by)
+    rationale = (
+        "dominance requires no material loss on every active dimension and a material gain on at least one",
+        "differences within the 5% race threshold are effectively tied",
+        "the frontier is an unranked set; no composite score is used",
+    )
+    return ParetoResult(
+        "completed", race.logical_model_id, None, race.method_version,
+        tuple(active), tuple(omitted), frontier, dominated, rationale, race.warnings,
+    )
+
+
+def analyze_decision(race: RaceResult, objective: str = "balanced") -> DecisionResult:
+    """Explain a supported objective using only evidence already in a RaceResult."""
+    canonical = {"generation": "generation", "prompt": "prompt", "latency": "latency", "balanced": "balanced"}
+    if objective not in canonical:
+        raise ValueError(f"unsupported decision objective: {objective}")
+    objective = canonical[objective]
+    evidence = (f"{race.method_version} measured execution",)
+    if race.status != "completed":
+        return DecisionResult(
+            "unavailable", objective, race.logical_model_id,
+            race.reason or f"race status is {race.status}", None, None, None, (),
+            race.warnings, evidence,
+        )
+    if objective == "balanced":
+        pareto = analyze_pareto(race)
+        if pareto.status != "completed":
+            return DecisionResult(
+                "inconclusive", objective, race.logical_model_id, pareto.reason,
+                None, None, None, pareto.rationale, pareto.warnings, evidence,
+                pareto.frontier,
+            )
+        if len(pareto.frontier) != 1:
+            return DecisionResult(
+                "inconclusive", objective, race.logical_model_id,
+                "no universal measured winner; multiple configurations remain nondominated",
+                None, None, None,
+                ("multiple measured-performance tradeoffs remain on the Pareto frontier",),
+                pareto.warnings, evidence, pareto.frontier,
+            )
+        preferred = pareto.frontier[0].configuration
+        return DecisionResult(
+            "recommended", objective, race.logical_model_id, None, preferred,
+            None, None,
+            ("unique measured-performance Pareto leader across all active dimensions",),
+            pareto.warnings, evidence, pareto.frontier,
+        )
+    metric_spec = {
+        "generation": ("fastest_generation", "generation_tps", "highest measured generation throughput", "generation_samples"),
+        "prompt": ("fastest_prompt_evaluation", "prompt_eval_tps", "highest measured prompt evaluation throughput", "prompt_eval_samples"),
+        "latency": ("lowest_latency", "total_latency_s", "lowest measured normalized inference latency", "latency_samples"),
+    }[objective]
+    winner = dict(race.winners).get(metric_spec[0], {"status": "inconclusive", "reason": "metric result is unavailable"})
+    if winner.get("status") != "winner":
+        return DecisionResult(
+            "inconclusive", objective, race.logical_model_id, winner.get("reason"),
+            None, metric_spec[1], None, (), race.warnings, evidence,
+        )
+    competitor = next((item for item in race.competitors if
+        item.runtime == winner.get("runtime") and item.artifact_id == winner.get("artifact_id")), None)
+    if competitor is None:
+        return DecisionResult(
+            "inconclusive", objective, race.logical_model_id,
+            "winner does not identify a measured competitor", None, metric_spec[1], None,
+            (), race.warnings, evidence,
+        )
+    measured_value = getattr(competitor, metric_spec[1])
+    winner_value = winner.get("value")
+    if (
+        not valid_analysis_measurement(measured_value)
+        or not valid_analysis_measurement(winner_value)
+        or getattr(competitor, metric_spec[3]) < 2
+    ):
+        return DecisionResult(
+            "inconclusive", objective, race.logical_model_id,
+            "race winner lacks valid positive finite measured evidence", None,
+            metric_spec[1], None, (), race.warnings, evidence,
+        )
+    rationale = (
+        metric_spec[2],
+        "materially ahead beyond the 5% race noise threshold",
+        f"{getattr(competitor, metric_spec[3])} timed samples were available",
+    )
+    return DecisionResult(
+        "recommended", objective, race.logical_model_id, None,
+        analysis_configuration(competitor), metric_spec[1], winner_value,
+        rationale, race.warnings, evidence,
+    )
+
+
 def execute_race(
     logical_model_id: str,
     eligible: Sequence[RaceConfiguration],
@@ -5239,23 +5603,25 @@ def export_race_passports(result: RaceResult, output: Path) -> Tuple[Path, ...]:
     return tuple(written)
 
 
-def command_race(args: argparse.Namespace) -> int:
+def execute_race_from_args(args: argparse.Namespace) -> Optional[RaceResult]:
+    """Validate CLI race inputs, prepare targets once, and execute one race."""
+    command = getattr(args, "command", "race") or "race"
     if args.runs < 1 or args.runs > 5:
-        eprint("race --runs must be between 1 and 5")
-        return 2
+        eprint(f"{command} --runs must be between 1 and 5")
+        return None
     if args.context < 1 or args.context > 32_768:
-        eprint("race --context must be between 1 and 32768")
-        return 2
+        eprint(f"{command} --context must be between 1 and 32768")
+        return None
     if args.num_predict < 1 or args.num_predict > 512:
-        eprint("race --num-predict must be between 1 and 512")
-        return 2
+        eprint(f"{command} --num-predict must be between 1 and 512")
+        return None
 
     local_values = tuple(getattr(args, "local_artifact", ()) or ())
     try:
         parse_local_artifact_values(local_values)
     except ValueError as error:
         eprint(str(error))
-        return 2
+        return None
     profile = hardware_profile()
     adapters: Tuple[ExecutionAdapter, ...] = (
         OllamaExecutionAdapter(args.host), LlamaCppExecutionAdapter(), MlxExecutionAdapter()
@@ -5267,7 +5633,7 @@ def command_race(args: argparse.Namespace) -> int:
         )
     except ValueError as error:
         eprint(str(error))
-        return 2
+        return None
     logical_id, eligible, ineligible, resolution_reason = race_configurations(
         args.model, profile, adapters, compatibility
     )
@@ -5281,7 +5647,7 @@ def command_race(args: argparse.Namespace) -> int:
         num_predict=args.num_predict,
         runs=args.runs,
     )
-    result = execute_race(
+    return execute_race(
         logical_id,
         eligible,
         ineligible,
@@ -5291,6 +5657,12 @@ def command_race(args: argparse.Namespace) -> int:
         resolution_reason,
         execution_targets=native_targets,
     )
+
+
+def command_race(args: argparse.Namespace) -> int:
+    result = execute_race_from_args(args)
+    if result is None:
+        return 2
     passport_dir = getattr(args, "passport_dir", None)
     if passport_dir:
         export_race_passports(result, Path(passport_dir))
@@ -5299,6 +5671,107 @@ def command_race(args: argparse.Namespace) -> int:
     else:
         print_race_result(result)
     return race_exit_code(result)
+
+
+def print_decision_result(result: DecisionResult) -> None:
+    print(f"\n{PROJECT_NAME} decision")
+    print("---------------")
+    print(f"Model: {result.logical_model_id}")
+    print(f"Objective: {result.objective}")
+    print(f"Status: {result.status}")
+    if result.reason:
+        print(f"Reason: {result.reason}")
+    if result.preferred:
+        print("\nPreferred configuration:")
+        print(f"  Runtime: {result.preferred.runtime}")
+        print(f"  Build: {result.preferred.artifact_id}")
+        if result.metric:
+            unit = "s" if result.metric == "total_latency_s" else "tok/s"
+            print(f"  Measurement: {result.value} {unit}")
+    elif result.objective == "balanced" and result.tradeoffs:
+        print("\nNo universal measured winner.")
+        print("\nTradeoffs:")
+        for entry in result.tradeoffs:
+            item = entry.configuration
+            print(f"- {item.runtime} / {item.artifact_id}: generation {item.generation_tps} tok/s; prompt {item.prompt_eval_tps} tok/s; latency {item.total_latency_s} s")
+    if result.rationale:
+        print("\nWhy:")
+        for item in result.rationale:
+            print(f"- {item}")
+    if result.caveats:
+        print("\nCaveats:")
+        for item in result.caveats:
+            print(f"- {item}")
+    print("\nEvidence:")
+    for item in result.evidence_basis:
+        print(f"- {item}")
+
+
+def command_choose(args: argparse.Namespace) -> int:
+    race = execute_race_from_args(args)
+    if race is None:
+        return 2
+    result = analyze_decision(race, args.objective)
+    if args.json:
+        print(json.dumps(result.to_dict(), indent=2))
+    else:
+        print_decision_result(result)
+    if race.status == "failed":
+        return 1
+    return 0 if result.status == "recommended" else 2
+
+
+def print_pareto_result(result: ParetoResult) -> None:
+    print(f"\n{PROJECT_NAME} measured-performance Pareto frontier")
+    print("---------------------------------------------")
+    print(f"Model: {result.logical_model_id}")
+    print(f"Status: {result.status}")
+    if result.reason:
+        print(f"Reason: {result.reason}")
+    print("\nActive dimensions:")
+    labels = {name: label for name, label, _ in PARETO_DIMENSIONS}
+    for dimension in result.active_dimensions:
+        print(f"- {labels[dimension]}")
+    if result.omitted_dimensions:
+        print("\nOmitted dimensions:")
+        for dimension, reason in result.omitted_dimensions:
+            print(f"- {labels[dimension]}: {reason}")
+    if result.frontier:
+        print("\nFrontier (unranked):")
+        for entry in result.frontier:
+            item = entry.configuration
+            print(f"- {item.runtime} / {item.artifact_id}")
+            print(f"  Generation: {item.generation_tps} tok/s")
+            print(f"  Prompt evaluation: {item.prompt_eval_tps} tok/s")
+            print(f"  Latency: {item.total_latency_s} s")
+            for label in entry.labels:
+                print(f"  Label: {label}")
+    if result.dominated:
+        print("\nDominated:")
+        for entry in result.dominated:
+            item = entry.configuration
+            print(f"- {item.runtime} / {item.artifact_id}")
+            for detail in entry.dominance_details:
+                print(f"  {detail}")
+    if result.warnings:
+        print("\nWarnings:")
+        for warning in result.warnings:
+            print(f"- {warning}")
+    print("\nNo composite score. This frontier measures performance, not model quality.")
+
+
+def command_optimize(args: argparse.Namespace) -> int:
+    race = execute_race_from_args(args)
+    if race is None:
+        return 2
+    result = analyze_pareto(race)
+    if args.json:
+        print(json.dumps(result.to_dict(), indent=2))
+    else:
+        print_pareto_result(result)
+    if race.status == "failed":
+        return 1
+    return 0 if result.status == "completed" else 2
 
 
 def command_passport_verify(args: argparse.Namespace) -> int:
@@ -5525,6 +5998,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write one passport per successfully measured competitor.",
     )
 
+    choose = subparsers.add_parser(
+        "choose", help="Explain a race-derived decision for an explicit objective."
+    )
+    optimize = subparsers.add_parser(
+        "optimize", help="Expose the measured-performance Pareto frontier."
+    )
+    for analysis_parser in (choose, optimize):
+        analysis_parser.add_argument("model", help="Curated ID/alias or owner/repository identifier.")
+        analysis_parser.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
+        analysis_parser.add_argument("--context", type=int, default=RACE_CONTEXT)
+        analysis_parser.add_argument("--runs", type=int, default=2)
+        analysis_parser.add_argument("--num-predict", type=int, default=RACE_NUM_PREDICT)
+        analysis_parser.add_argument("--host", default=DEFAULT_OLLAMA_HOST)
+        analysis_parser.add_argument(
+            "--local-artifact", action="append", default=[], metavar="RUNTIME=PATH",
+            help="Use an explicit already-local MLX-LM directory or llama.cpp GGUF file.",
+        )
+    choose.add_argument(
+        "--objective", choices=("generation", "prompt", "latency", "balanced"),
+        default="balanced",
+    )
+
     passport = subparsers.add_parser(
         "passport", help="Inspect local benchmark passports without execution or network access."
     )
@@ -5570,6 +6065,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return command_bench(args)
     if args.command == "race":
         return command_race(args)
+    if args.command == "choose":
+        return command_choose(args)
+    if args.command == "optimize":
+        return command_optimize(args)
     if args.command == "passport":
         if args.passport_command == "verify":
             return command_passport_verify(args)
