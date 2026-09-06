@@ -4516,6 +4516,39 @@ def local_execution_targets(
     return tuple(sorted(targets, key=lambda item: (item.configuration.runtime, item.configuration.artifact_id)))
 
 
+def _autopilot_ollama_inventory() -> Tuple[Any, ...]:
+    """Observe installed Ollama artifacts through the private inventory boundary."""
+    from _llmrig.inventory import OllamaInventoryProvider
+
+    provider = OllamaInventoryProvider(
+        installed_models=installed_ollama_models,
+        curated_specs=CURATED_SOURCE.list_specs,
+        model_name_matches=model_name_matches,
+        evidence_factory=RecommendationEvidence,
+        known_confidence=Confidence.HIGH,
+        unknown_confidence=Confidence.UNKNOWN,
+    )
+    return provider.observe()
+
+
+def _autopilot_explicit_native_inventory(
+    logical_model_id: str, values: Sequence[str]
+) -> Tuple[Any, ...]:
+    """Observe only explicitly supplied native artifacts, retaining private locators."""
+    from _llmrig.inventory import ExplicitNativeInventoryProvider
+
+    provider = ExplicitNativeInventoryProvider(
+        requested_logical_model_id=logical_model_id,
+        values=values,
+        parse_values=parse_local_artifact_values,
+        validate_locator=validated_local_locator,
+        public_id_for_runtime=local_artifact_id,
+        evidence_factory=RecommendationEvidence,
+        unknown_confidence=Confidence.UNKNOWN,
+    )
+    return provider.observe()
+
+
 def race_configurations(
     identifier: str,
     profile: Dict[str, Any],

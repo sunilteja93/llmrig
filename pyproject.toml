@@ -22,6 +22,7 @@ llmrig = "llmrig:main"
 
 [tool.setuptools]
 py-modules = ["llmrig"]
+packages = ["_llmrig"]
 
 [tool.setuptools.dynamic]
 version = {attr = "llmrig.VERSION"}
