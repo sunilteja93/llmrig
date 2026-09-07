@@ -61,6 +61,7 @@ class MeasurementCapabilityState(str, Enum):
 class MeasurementState(str, Enum):
     NOT_REQUESTED = "not_requested"
     NOT_MEASURED = "not_measured"
+    VERIFICATION_UNAVAILABLE = "verification_unavailable"
     MEASURED = "measured"
     FAILED = "failed"
     UNKNOWN = "unknown"

@@ -197,6 +197,7 @@ llmrig solve MODEL
 llmrig solve MODEL --json
 llmrig solve MODEL --context TOKENS
 llmrig solve MODEL --local-artifact RUNTIME=PATH
+llmrig solve MODEL --verify
 ```
 
 `MODEL` may be a curated ID or alias, or an exact `owner/repository` Hugging
@@ -231,13 +232,44 @@ Solve does not invent a best runtime, calculate a universal score, or infer
 model quality from memory fit or speed. A practical recommendation requires the
 available evidence to support exactly one runnable configuration without a
 comparable unresolved alternative; otherwise the result remains inconclusive.
-No benchmark verification is performed by solve.
+No benchmark verification is performed unless `--verify` is explicitly supplied.
+
+`solve --verify` executes only compatible, already-local candidates backed by an
+LLMRig execution and measurement adapter. It reuses the existing race-v2 workload,
+execution path, 5% noise threshold, and balanced Pareto decision; it does not pull
+models, install or start runtimes, scan for artifacts, or write benchmark passports.
+At least two genuinely comparable executable configurations are required. With
+fewer than two, solve analysis still succeeds but verification is reported as
+unavailable and no inference is attempted. A failed intended competitor invalidates
+the comparison, while a completed race with multiple Pareto members remains
+inconclusive. The original planning recommendation is retained separately from the
+verification candidate set and the measured run recommendation.
 
 Exit status is independent of whether a model can run:
 
-- `0` = request analyzed successfully, including incompatible or inconclusive results
-- `1` = operational solver failure
-- `2` = invalid or unresolvable request
+- `0` = request analyzed successfully, including a completed but inconclusive verification
+- `1` = operational solver or attempted verification execution failure
+- `2` = invalid/unresolvable request, or requested verification is unavailable
+
+### Minimal Python SDK
+
+```python
+import llmrig
+
+result = llmrig.solve(
+    "qwen3.8:27b-mlx",
+    context=32768,
+    verify=False,
+)
+print(result.plan.recommendation_status)
+```
+
+`llmrig.solve(model, *, context=None, local_artifacts=(), verify=False)` returns
+the same `SolveResult` used by human and JSON CLI output. The default is read-only
+and does not print or terminate the process. `local_artifacts` accepts repeatable
+`RUNTIME=PATH` strings. Invalid or unresolvable requests raise `SolveInputError`;
+operational failures raise `SolveEngineError`. `SolveResult` and `SolveCandidate`
+are the deliberately exposed result contracts; `_llmrig` remains private.
 
 ### Race locally executable configurations
 

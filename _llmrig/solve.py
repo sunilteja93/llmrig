@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Dict, Optional, Sequence, Tuple
 
@@ -23,7 +24,7 @@ from .planning import (
 from .privacy import validate_public_text
 
 
-SOLVE_SCHEMA_VERSION = "1.0"
+SOLVE_SCHEMA_VERSION = "1.1"
 _RECIPE_STATUSES = {
     "already_runnable",
     "known_setup_path",
@@ -40,6 +41,7 @@ class SolveRequest:
     model: Optional[str]
     context_tokens: Optional[int] = None
     local_artifact_runtimes: Tuple[str, ...] = ()
+    verify: bool = False
 
     def __post_init__(self) -> None:
         if self.model is not None:
@@ -50,6 +52,8 @@ class SolveRequest:
         for runtime in runtimes:
             validate_public_text(runtime, "solve local artifact runtime")
         object.__setattr__(self, "local_artifact_runtimes", runtimes)
+        if not isinstance(self.verify, bool):
+            raise ValueError("solve verify must be a boolean")
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -59,6 +63,7 @@ class SolveRequest:
                 {"runtime": runtime, "private_locator_required": True}
                 for runtime in self.local_artifact_runtimes
             ],
+            "verify": self.verify,
         }
 
 
@@ -104,6 +109,7 @@ class SolveCandidate:
     local_identity_confidence: Any
     local_identity_evidence: Tuple[Any, ...]
     recipe: ReproducibleRecipe
+    measurement_result: Optional["SolveMeasurement"] = None
 
     def __post_init__(self) -> None:
         validate_public_text(self.candidate_id, "solve candidate id", identity=True)
@@ -128,9 +134,57 @@ class SolveCandidate:
                     "evidence": list(_evidence_payloads(self.local_identity_evidence)),
                 },
                 "recipe": self.recipe.to_dict(),
+                "measurement_result": (
+                    self.measurement_result.to_dict()
+                    if self.measurement_result is not None
+                    else None
+                ),
             }
         )
         return payload
+
+
+@dataclass(frozen=True)
+class SolveMeasurement:
+    """Privacy-safe measured race evidence for one solve candidate."""
+
+    method_version: str
+    generation_tps: Optional[float]
+    prompt_eval_tps: Optional[float]
+    total_latency_s: Optional[float]
+    measured_runs: int
+    timestamp: str
+    warnings: Tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        validate_public_text(self.method_version, "solve measurement method")
+        validate_public_text(self.timestamp, "solve measurement timestamp")
+        if self.measured_runs < 1:
+            raise ValueError("solve measurement requires at least one measured run")
+        for value in (
+            self.generation_tps,
+            self.prompt_eval_tps,
+            self.total_latency_s,
+        ):
+            if value is not None and (not math.isfinite(value) or value <= 0):
+                raise ValueError(
+                    "solve measurement metrics must be positive and finite when known"
+                )
+        normalized = tuple(sorted(dict.fromkeys(item.strip() for item in self.warnings)))
+        for item in normalized:
+            validate_public_text(item, "solve measurement warning")
+        object.__setattr__(self, "warnings", normalized)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "method_version": self.method_version,
+            "generation_tps": self.generation_tps,
+            "prompt_eval_tps": self.prompt_eval_tps,
+            "total_latency_s": self.total_latency_s,
+            "measured_runs": self.measured_runs,
+            "timestamp": self.timestamp,
+            "warnings": list(self.warnings),
+        }
 
 
 @dataclass(frozen=True)
@@ -145,6 +199,10 @@ class SolvePlan:
     def __post_init__(self) -> None:
         if self.recommendation_status not in {"recommended", "inconclusive"}:
             raise ValueError("solve plan recommendation status is invalid")
+        if self.recommendation_status == "recommended" and not self.recommended_candidate_id:
+            raise ValueError("recommended solve plan requires a candidate id")
+        if self.recommendation_status == "inconclusive" and self.recommended_candidate_id:
+            raise ValueError("inconclusive solve plan cannot identify a recommended candidate")
         validate_public_text(self.recommended_candidate_id, "recommended candidate id")
         validate_public_text(self.reason, "solve plan reason")
         normalized = tuple(sorted(dict.fromkeys(item.strip() for item in self.unknowns)))
@@ -162,6 +220,69 @@ class SolvePlan:
 
 
 @dataclass(frozen=True)
+class SolveVerification:
+    """Outcome of the explicitly requested race-v2 verification step."""
+
+    status: str
+    reason: Optional[str]
+    method_version: Optional[str]
+    context_tokens: Optional[int]
+    num_predict: Optional[int]
+    candidate_ids: Tuple[str, ...]
+    recommendation: SolvePlan
+    warnings: Tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.status not in {"not_requested", "unavailable", "completed", "failed"}:
+            raise ValueError("solve verification status is invalid")
+        validate_public_text(self.reason, "solve verification reason")
+        validate_public_text(self.method_version, "solve verification method")
+        if self.context_tokens is not None and self.context_tokens <= 0:
+            raise ValueError("solve verification context must be positive")
+        if self.num_predict is not None and self.num_predict <= 0:
+            raise ValueError("solve verification token count must be positive")
+        candidate_ids = tuple(sorted(dict.fromkeys(self.candidate_ids)))
+        for item in candidate_ids:
+            validate_public_text(item, "solve verification candidate id", identity=True)
+        warnings = tuple(sorted(dict.fromkeys(item.strip() for item in self.warnings)))
+        for item in warnings:
+            validate_public_text(item, "solve verification warning")
+        object.__setattr__(self, "candidate_ids", candidate_ids)
+        object.__setattr__(self, "warnings", warnings)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "status": self.status,
+            "reason": self.reason,
+            "method_version": self.method_version,
+            "workload": {
+                "context_tokens": self.context_tokens,
+                "num_predict": self.num_predict,
+            },
+            "candidate_ids": list(self.candidate_ids),
+            "recommendation": self.recommendation.to_dict(),
+            "warnings": list(self.warnings),
+        }
+
+
+def verification_not_requested() -> SolveVerification:
+    return SolveVerification(
+        "not_requested",
+        None,
+        None,
+        None,
+        None,
+        (),
+        SolvePlan(
+            "inconclusive",
+            None,
+            "Measured run recommendation was not requested.",
+            ("performance has not been measured",),
+        ),
+    )
+
+
+@dataclass(frozen=True)
 class SolveResult:
     """Schema-versioned result shared by JSON and human rendering."""
 
@@ -176,6 +297,7 @@ class SolveResult:
     unknowns: Tuple[str, ...] = ()
     error: Optional[str] = None
     schema_version: str = SOLVE_SCHEMA_VERSION
+    verification: Optional[SolveVerification] = None
 
     def __post_init__(self) -> None:
         if self.status not in {"analyzed", "invalid_request", "engine_failure"}:
@@ -189,6 +311,8 @@ class SolveResult:
         for item in normalized:
             validate_public_text(item, "solve result unknown")
         object.__setattr__(self, "unknowns", normalized)
+        if self.verification is None:
+            object.__setattr__(self, "verification", verification_not_requested())
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -203,6 +327,7 @@ class SolveResult:
             },
             "candidates": [item.to_dict() for item in self.candidates],
             "plan": self.plan.to_dict(),
+            "verification": self.verification.to_dict(),
             "unknowns": list(self.unknowns),
             "error": self.error,
         }
@@ -275,6 +400,28 @@ def _compatibility_assessment(
     explicit_native: bool,
 ) -> CandidateAssessment[CompatibilityState]:
     if explicit_native:
+        if inputs.request.verify and getattr(inputs.compatibility, "can_run", None) is True:
+            evidence = (
+                inputs.evidence_factory(
+                    "estimated-native-verification-eligibility",
+                    "resolved logical-model compatibility and explicit local structure",
+                    "the existing race verifier may attempt this user-associated native target; its exact content, size, and quantization remain unverified",
+                ),
+            )
+            unknowns = (
+                "native artifact size and content identity are not independently verified",
+                "native artifact quantization is unknown",
+            )
+            if inputs.request.context_tokens is not None:
+                unknowns += (
+                    "the requested context limit is not independently verified for this native artifact",
+                )
+            return _known(
+                CompatibilityState.COMPATIBLE,
+                inputs.high_confidence,
+                evidence,
+                unknowns=unknowns,
+            )
         unknowns = [
             "static compatibility of the user-supplied native artifact is unknown",
             "native artifact size and content identity are not independently verified",
@@ -642,14 +789,23 @@ def _candidate(
         inputs, compatibility, runtime, local, capability
     )
     measurement_capability = _measurement_capability_assessment(inputs, capability)
+    measurement_requested = inputs.request.verify
     measurement = _known(
-        MeasurementState.NOT_REQUESTED,
+        (
+            MeasurementState.NOT_MEASURED
+            if measurement_requested
+            else MeasurementState.NOT_REQUESTED
+        ),
         inputs.high_confidence,
         (
             inputs.evidence_factory(
                 "solve-policy",
-                "read-only solve command",
-                "benchmark verification was not requested or performed",
+                "solve verification policy",
+                (
+                    "benchmark verification was requested but has not yet been performed"
+                    if measurement_requested
+                    else "benchmark verification was not requested or performed"
+                ),
             ),
         ),
         unknowns=("performance has not been measured",),
@@ -839,7 +995,195 @@ def solve(inputs: SolveInputs) -> SolveResult:
         inputs.model_name,
         tuple(candidates),
         plan,
-        unknowns=("benchmark verification was not performed",),
+        unknowns=(
+            ("benchmark verification is pending",)
+            if inputs.request.verify
+            else ("benchmark verification was not performed",)
+        ),
+    )
+
+
+def apply_verification(
+    result: SolveResult,
+    race: Any,
+    decision: Any,
+    candidate_by_competitor: Dict[Tuple[str, str], str],
+    evidence_factory: Callable[[str, str, str], Any],
+    high_confidence: Any,
+    measurement_capability_unavailable: bool = False,
+) -> SolveResult:
+    """Fold one existing race-v2 result into the public solve representation."""
+    selected_ids = tuple(sorted(set(candidate_by_competitor.values())))
+    competitor_by_candidate = {
+        candidate_by_competitor[(item.runtime, item.artifact_id)]: item
+        for item in race.competitors
+        if (item.runtime, item.artifact_id) in candidate_by_competitor
+    }
+    measured_evidence = evidence_factory(
+        "measured",
+        f"{race.method_version} local execution",
+        "the candidate was measured by the existing race-v2 workload and execution path",
+    )
+    failed_evidence = evidence_factory(
+        "measured-execution-failure",
+        f"{race.method_version} local execution",
+        "the candidate's benchmark execution failed and invalidated the comparison",
+    )
+    unavailable_evidence = evidence_factory(
+        "verification-unavailable",
+        f"{race.method_version} verification policy",
+        "the requested measured comparison could not be performed",
+    )
+
+    preferred_identity = None
+    if decision is not None and decision.preferred is not None:
+        preferred_identity = (decision.preferred.runtime, decision.preferred.artifact_id)
+    preferred_candidate_id = (
+        candidate_by_competitor.get(preferred_identity)
+        if preferred_identity is not None
+        else None
+    )
+    measured_recommendation = bool(
+        race.status == "completed"
+        and decision is not None
+        and decision.status == "recommended"
+        and preferred_candidate_id is not None
+    )
+
+    candidates = []
+    for candidate in result.candidates:
+        competitor = competitor_by_candidate.get(candidate.candidate_id)
+        if competitor is not None and competitor.execution_status == "success":
+            measurement_state = _known(
+                MeasurementState.MEASURED,
+                high_confidence,
+                (measured_evidence,) + tuple(competitor.evidence),
+            )
+            measurement_result = SolveMeasurement(
+                race.method_version,
+                competitor.generation_tps,
+                competitor.prompt_eval_tps,
+                competitor.total_latency_s,
+                competitor.measured_runs,
+                competitor.timestamp,
+                tuple(race.warnings) + tuple(competitor.warnings),
+            )
+        elif competitor is not None:
+            measurement_state = _known(
+                MeasurementState.FAILED,
+                high_confidence,
+                (failed_evidence,),
+                (competitor.failure or "benchmark execution failed",),
+            )
+            measurement_result = None
+        elif race.status == "unavailable" and candidate.candidate_id in selected_ids:
+            measurement_state = _known(
+                MeasurementState.VERIFICATION_UNAVAILABLE,
+                high_confidence,
+                (unavailable_evidence,),
+                (race.reason or "verification is unavailable",),
+            )
+            measurement_result = None
+        else:
+            measurement_state = _known(
+                MeasurementState.NOT_MEASURED,
+                high_confidence,
+                (unavailable_evidence,),
+                unknowns=("this candidate was not measured by the requested comparison",),
+            )
+            measurement_result = None
+
+        if measured_recommendation:
+            recommendation_state = (
+                RecommendationState.RECOMMENDED
+                if candidate.candidate_id == preferred_candidate_id
+                else RecommendationState.NOT_RECOMMENDED
+                if candidate.candidate_id in selected_ids
+                else RecommendationState.INCONCLUSIVE
+            )
+        else:
+            recommendation_state = RecommendationState.INCONCLUSIVE
+        recommendation_evidence = evidence_factory(
+            "measured-decision",
+            f"{race.method_version} balanced Pareto analysis",
+            (
+                "the candidate is the unique measured-performance Pareto leader"
+                if recommendation_state == RecommendationState.RECOMMENDED
+                else "no measured run recommendation is assigned to this candidate"
+            ),
+        )
+        recommendation = _known(
+            recommendation_state,
+            high_confidence,
+            (recommendation_evidence,),
+        )
+        measurement_capability = candidate.assessments.measurement_capability
+        if (
+            measurement_capability_unavailable
+            and candidate.candidate_id in selected_ids
+        ):
+            measurement_capability = _known(
+                MeasurementCapabilityState.NOT_MEASURABLE,
+                high_confidence,
+                (unavailable_evidence,),
+                (race.reason or "the requested workload is not measurable",),
+            )
+        candidates.append(
+            replace(
+                candidate,
+                configuration=replace(
+                    candidate.configuration,
+                    assessments=replace(
+                        candidate.assessments,
+                        measurement_capability=measurement_capability,
+                        measurement=measurement_state,
+                        recommendation=recommendation,
+                    ),
+                ),
+                measurement_result=measurement_result,
+            )
+        )
+
+    if race.status == "completed" and decision is not None:
+        recommendation = SolvePlan(
+            "recommended" if measured_recommendation else "inconclusive",
+            preferred_candidate_id if measured_recommendation else None,
+            (
+                "A unique measured-performance Pareto leader was identified by race-v2."
+                if measured_recommendation
+                else decision.reason or "The measured comparison remains inconclusive."
+            ),
+            () if measured_recommendation else ("multiple measured tradeoffs remain",),
+        )
+    else:
+        recommendation = SolvePlan(
+            "inconclusive",
+            None,
+            (
+                race.reason
+                or "The requested measured comparison did not complete successfully."
+            ),
+            ("no measured run recommendation is available",),
+        )
+    verification = SolveVerification(
+        race.status,
+        race.reason,
+        race.method_version,
+        race.workload.context,
+        race.workload.num_predict,
+        selected_ids,
+        recommendation,
+        tuple(race.warnings),
+    )
+    return replace(
+        result,
+        candidates=tuple(candidates),
+        verification=verification,
+        unknowns=(
+            ()
+            if race.status == "completed"
+            else ("requested benchmark verification did not complete",)
+        ),
     )
 
 

@@ -27,6 +27,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Protocol, Sequence, Tuple, TypeVar
 
+from _llmrig.solve import SolveCandidate, SolveResult
+
 PROJECT_NAME = "LLMRig"
 PROJECT_SLUG = "llmrig"
 VERSION = "0.6.0"
@@ -41,6 +43,22 @@ RACE_NOISE_THRESHOLD = 0.05
 PASSPORT_SCHEMA_VERSION = "1.0"
 BENCHMARK_METHOD_VERSION = "ollama-bench-v1"
 BENCH_REQUEST_TIMEOUT = 600
+
+
+class SolveError(Exception):
+    """Base exception for the stable Python solve API."""
+
+    def __init__(self, message: str, result: Optional[SolveResult] = None) -> None:
+        super().__init__(message)
+        self.result = result
+
+
+class SolveInputError(SolveError, ValueError):
+    """Raised when a Python solve request is invalid or unresolvable."""
+
+
+class SolveEngineError(SolveError):
+    """Raised when solve analysis fails operationally."""
 
 OFFICIAL = "official"
 REDUCED_REFUSAL = "community-reduced-refusal"
@@ -4549,9 +4567,193 @@ def _autopilot_explicit_native_inventory(
     return provider.observe()
 
 
+def _execution_target_from_inventory(
+    inventory_target: Any, configuration: RaceConfiguration
+) -> ExecutionTarget:
+    """Narrow private handoff from an observed native target to race execution."""
+    from _llmrig.inventory import _execution_locator
+
+    return ExecutionTarget(configuration, _execution_locator(inventory_target))
+
+
+def _solve_verification_configurations(
+    result: SolveResult,
+    inputs: Any,
+    ollama_targets: Sequence[Any],
+    native_targets: Sequence[Any],
+    adapters: Sequence[ExecutionAdapter],
+) -> Tuple[
+    Tuple[RaceConfiguration, ...],
+    Tuple[RaceConfiguration, ...],
+    Tuple[ExecutionTarget, ...],
+    Dict[Tuple[str, str], str],
+]:
+    """Bridge verified solve candidates to existing race configurations."""
+    capabilities = {item.runtime: item for item in inputs.capabilities}
+    adapter_names = {item.runtime for item in adapters}
+    ollama_by_record = {id(item.record): item for item in ollama_targets}
+    matched_records = {
+        artifact_id: record for artifact_id, record in inputs.matched_ollama_records
+    }
+    eligible = []
+    ineligible = []
+    execution_targets = []
+    candidate_by_competitor: Dict[Tuple[str, str], str] = {}
+
+    for candidate in result.candidates:
+        states = candidate.assessments
+        runtime = candidate.configuration.runtime
+        capability = capabilities.get(runtime)
+        if runtime == "ollama":
+            record = matched_records.get(candidate.configuration.artifact_id)
+            inventory_target = ollama_by_record.get(id(record)) if record is not None else None
+        else:
+            inventory_target = next(
+                (
+                    item
+                    for item in native_targets
+                    if item.record.runtime == runtime
+                    and item.record.public_artifact_id
+                    == candidate.configuration.artifact_id
+                ),
+                None,
+            )
+            record = inventory_target.record if inventory_target is not None else None
+
+        blockers = []
+        if states.compatibility.state.value != "compatible":
+            blockers.append("candidate compatibility is not verified as compatible")
+        if states.local_availability.state.value != "available":
+            blockers.append("candidate is not known to be already local")
+        if states.execution.state.value != "executable":
+            blockers.append("candidate is not executable by LLMRig")
+        if states.measurement_capability.state.value != "measurable":
+            blockers.append("candidate is not measurable by LLMRig")
+        if runtime not in adapter_names:
+            blockers.append("LLMRig execution adapter is unavailable")
+        if record is None or inventory_target is None:
+            blockers.append("candidate has no matching observed local execution target")
+
+        public_artifact_id = (
+            record.public_artifact_id
+            if runtime == "ollama" and record is not None
+            else candidate.configuration.artifact_id
+        )
+        evidence = tuple(
+            dict.fromkeys(
+                states.compatibility.evidence
+                + states.local_availability.evidence
+                + states.execution.evidence
+                + states.measurement_capability.evidence
+            )
+        )
+        configuration = RaceConfiguration(
+            inputs.logical_model_id,
+            runtime,
+            public_artifact_id,
+            candidate.configuration.artifact_format,
+            candidate.configuration.quantization,
+            race_safe_runtime_version(capability.version) if capability else None,
+            not blockers,
+            record.artifact_fingerprint if record is not None else None,
+            tuple(dict.fromkeys(blockers)),
+            evidence,
+        )
+        if blockers:
+            ineligible.append(configuration)
+            continue
+        eligible.append(configuration)
+        candidate_by_competitor[(runtime, public_artifact_id)] = candidate.candidate_id
+        if runtime in {"llama.cpp", "mlx-lm"}:
+            execution_targets.append(
+                _execution_target_from_inventory(inventory_target, configuration)
+            )
+
+    return (
+        unique_race_configurations(eligible),
+        unique_race_configurations(ineligible),
+        tuple(execution_targets),
+        candidate_by_competitor,
+    )
+
+
+def race_workload_error(context: int, num_predict: int, runs: int) -> Optional[str]:
+    """Return the existing race-v2 workload validation failure, if any."""
+    if runs < 1 or runs > 5:
+        return "--runs must be between 1 and 5"
+    if context < 1 or context > 32_768:
+        return "--context must be between 1 and 32768"
+    if num_predict < 1 or num_predict > 512:
+        return "--num-predict must be between 1 and 512"
+    return None
+
+
+def _verify_solve_result(
+    result: SolveResult,
+    inputs: Any,
+    profile: Dict[str, Any],
+    ollama_targets: Sequence[Any],
+    native_targets: Sequence[Any],
+) -> SolveResult:
+    """Execute and analyze exactly one existing race-v2 comparison."""
+    from _llmrig.solve import apply_verification
+
+    adapters: Tuple[ExecutionAdapter, ...] = (
+        OllamaExecutionAdapter(DEFAULT_OLLAMA_HOST),
+        LlamaCppExecutionAdapter(),
+        MlxExecutionAdapter(),
+    )
+    eligible, ineligible, execution_targets, candidate_map = (
+        _solve_verification_configurations(
+            result, inputs, ollama_targets, native_targets, adapters
+        )
+    )
+    context = inputs.request.context_tokens or RACE_CONTEXT
+    workload = RaceWorkload(
+        prompt=SPEED_PROMPT,
+        context=context,
+        num_predict=RACE_NUM_PREDICT,
+    )
+    validation_error = race_workload_error(
+        workload.context, workload.num_predict, workload.runs
+    )
+    if validation_error is not None:
+        race = RaceResult(
+            "unavailable",
+            inputs.logical_model_id,
+            f"requested verification workload is unsupported: {validation_error}",
+            RACE_METHOD_VERSION,
+            now_iso(),
+            workload,
+            race_hardware_summary(profile),
+            eligible,
+            ineligible,
+        )
+    else:
+        race = execute_race(
+            inputs.logical_model_id,
+            eligible,
+            ineligible,
+            adapters,
+            workload,
+            race_hardware_summary(profile),
+            execution_targets=execution_targets,
+        )
+    decision = analyze_decision(race, "balanced")
+    return apply_verification(
+        result,
+        race,
+        decision,
+        candidate_map,
+        RecommendationEvidence,
+        Confidence.HIGH,
+        measurement_capability_unavailable=validation_error is not None,
+    )
+
+
 def solve_for_request(request: Any, local_artifact_values: Sequence[str]) -> Any:
     """Compose existing read-only observations into the private solve domain."""
-    from _llmrig.solve import SolveInputs, solve, terminal_solve_result
+    from _llmrig.solve import SolveInputs, solve as construct_solve, terminal_solve_result
 
     identifier = request.model or ""
     curated = CURATED_SOURCE.resolve(identifier)
@@ -4647,11 +4849,73 @@ def solve_for_request(request: Any, local_artifact_values: Sequence[str]) -> Any
         high_confidence=Confidence.HIGH,
         unknown_confidence=Confidence.UNKNOWN,
     )
-    return solve(inputs)
+    result = construct_solve(inputs)
+    if not request.verify:
+        return result
+    return _verify_solve_result(
+        result, inputs, profile, ollama_targets, explicit_targets
+    )
+
+
+def solve(
+    model: str,
+    *,
+    context: Optional[int] = None,
+    local_artifacts: Sequence[str] = (),
+    verify: bool = False,
+) -> SolveResult:
+    """Analyze a model and optionally verify already-local candidates with race-v2.
+
+    Invalid or unresolvable requests raise :class:`SolveInputError`; operational
+    analysis failures raise :class:`SolveEngineError`. The function never exits or
+    prints. Verification is the only mode that may execute inference.
+    """
+    from _llmrig.solve import SolveRequest
+
+    if not isinstance(model, str) or not model.strip():
+        raise SolveInputError("model must be a non-empty string")
+    if context is not None and (
+        isinstance(context, bool) or not isinstance(context, int) or context <= 0
+    ):
+        raise SolveInputError("context must be a positive integer when provided")
+    if not isinstance(verify, bool):
+        raise SolveInputError("verify must be a boolean")
+    if isinstance(local_artifacts, (str, bytes)):
+        raise SolveInputError("local_artifacts must be a sequence of RUNTIME=PATH values")
+    try:
+        values = tuple(local_artifacts)
+    except Exception:
+        raise SolveInputError("local_artifacts must be a sequence of RUNTIME=PATH values")
+    if any(not isinstance(item, str) for item in values):
+        raise SolveInputError("local_artifacts must contain only RUNTIME=PATH strings")
+    try:
+        parsed = parse_local_artifact_values(values)
+        request = SolveRequest(
+            model,
+            context,
+            tuple(runtime for runtime, _ in parsed),
+            verify,
+        )
+        result = solve_for_request(request, values)
+    except ValueError as exc:
+        raise SolveInputError(str(exc))
+    except SolveError:
+        raise
+    except Exception:
+        raise SolveEngineError("the solve engine failed operationally")
+    if result.status == "invalid_request":
+        raise SolveInputError(result.error or "the solve request is invalid", result)
+    if result.status == "engine_failure":
+        raise SolveEngineError(result.error or "the solve engine failed", result)
+    return result
 
 
 def solve_exit_code(result: Any) -> int:
     if result.status == "analyzed":
+        if result.verification.status == "failed":
+            return 1
+        if result.verification.status == "unavailable":
+            return 2
         return 0
     if result.status == "invalid_request":
         return 2
@@ -5497,30 +5761,34 @@ def command_solve(args: argparse.Namespace) -> int:
     from _llmrig.solve import SolveRequest, terminal_solve_result
 
     try:
-        parsed_artifacts = parse_local_artifact_values(args.local_artifact)
-        request = SolveRequest(
+        result = solve(
             args.model,
-            args.context,
-            tuple(runtime for runtime, _ in parsed_artifacts),
+            context=args.context,
+            local_artifacts=args.local_artifact,
+            verify=getattr(args, "verify", False),
         )
-        result = solve_for_request(request, args.local_artifact)
-    except ValueError as exc:
-        request = locals().get("request", SolveRequest(None))
-        result = terminal_solve_result(
-            request,
-            "invalid_request",
-            "invalid_request",
-            Confidence.UNKNOWN,
-            str(exc),
-        )
+        request = result.request
+    except SolveError as exc:
+        if exc.result is not None:
+            result = exc.result
+            request = result.request
+        else:
+            request = SolveRequest(None, verify=getattr(args, "verify", False))
+            result = terminal_solve_result(
+                request,
+                "invalid_request" if isinstance(exc, SolveInputError) else "engine_failure",
+                "invalid_request" if isinstance(exc, SolveInputError) else "engine_failure",
+                Confidence.UNKNOWN,
+                str(exc),
+            )
     except Exception:
-        request = locals().get("request", SolveRequest(None))
+        request = SolveRequest(None, verify=getattr(args, "verify", False))
         result = terminal_solve_result(
             request,
             "engine_failure",
             "engine_failure",
             Confidence.UNKNOWN,
-            "The read-only solve engine failed operationally.",
+            "The solve engine failed operationally.",
         )
 
     if args.json:
@@ -5537,6 +5805,9 @@ def command_solve(args: argparse.Namespace) -> int:
         print(f"Context:      {request.context_tokens:,} tokens")
     if result.error:
         print(f"Error:        {result.error}")
+    print(f"Verification: {result.verification.status}")
+    if result.verification.reason:
+        print(f"Verify reason: {result.verification.reason}")
     for candidate in result.candidates:
         states = candidate.assessments
         print(f"\nCandidate: {candidate.candidate_id}")
@@ -5551,6 +5822,15 @@ def command_solve(args: argparse.Namespace) -> int:
         print(f"  Execution: {states.execution.state.value}")
         print(f"  Measurement support: {states.measurement_capability.state.value}")
         print(f"  Measurement: {states.measurement.state.value}")
+        for blocker in states.measurement.blockers:
+            print(f"  Verification blocker: {blocker}")
+        if candidate.measurement_result is not None:
+            measured = candidate.measurement_result
+            print(f"  Generation: {measured.generation_tps or 'unknown'} tok/s")
+            print(f"  Prompt evaluation: {measured.prompt_eval_tps or 'unknown'} tok/s")
+            print(f"  Normalized latency: {measured.total_latency_s or 'unknown'} s")
+            for warning in measured.warnings:
+                print(f"  Measurement warning: {warning}")
         print(f"  Recommendation: {states.recommendation.state.value}")
         print(
             "  Local identity attested: "
@@ -5576,6 +5856,15 @@ def command_solve(args: argparse.Namespace) -> int:
     print(f"  Reason: {result.plan.reason}")
     for unknown in result.plan.unknowns:
         print(f"  Unknown: {unknown}")
+    if result.verification.status != "not_requested":
+        print("\nMeasured run recommendation")
+        measured_plan = result.verification.recommendation
+        print(f"  Recommendation: {measured_plan.recommendation_status}")
+        if measured_plan.recommended_candidate_id:
+            print(f"  Candidate: {measured_plan.recommended_candidate_id}")
+        print(f"  Reason: {measured_plan.reason}")
+        for warning in result.verification.warnings:
+            print(f"  Warning: {warning}")
     return solve_exit_code(result)
 
 
@@ -5834,14 +6123,9 @@ def export_race_passports(result: RaceResult, output: Path) -> Tuple[Path, ...]:
 def execute_race_from_args(args: argparse.Namespace) -> Optional[RaceResult]:
     """Validate CLI race inputs, prepare targets once, and execute one race."""
     command = getattr(args, "command", "race") or "race"
-    if args.runs < 1 or args.runs > 5:
-        eprint(f"{command} --runs must be between 1 and 5")
-        return None
-    if args.context < 1 or args.context > 32_768:
-        eprint(f"{command} --context must be between 1 and 32768")
-        return None
-    if args.num_predict < 1 or args.num_predict > 512:
-        eprint(f"{command} --num-predict must be between 1 and 512")
+    workload_error = race_workload_error(args.context, args.num_predict, args.runs)
+    if workload_error is not None:
+        eprint(f"{command} {workload_error}")
         return None
 
     local_values = tuple(getattr(args, "local_artifact", ()) or ())
@@ -6164,6 +6448,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     solve_parser.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
     solve_parser.add_argument("--context", type=int, help="Requested context in tokens.")
+    solve_parser.add_argument(
+        "--verify", action="store_true",
+        help="Measure at least two comparable already-local candidates with race-v2.",
+    )
     solve_parser.add_argument(
         "--local-artifact", action="append", default=[], metavar="RUNTIME=PATH",
         help="Inspect an explicit already-local MLX-LM directory or llama.cpp GGUF file.",
