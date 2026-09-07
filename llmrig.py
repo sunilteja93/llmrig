@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""LLMRig: cross-platform local LLM readiness, discovery, setup, and benchmarking."""
+"""LLMRig: compatibility and performance intelligence for local AI."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from _llmrig.solve import SolveCandidate, SolveResult
 
 PROJECT_NAME = "LLMRig"
 PROJECT_SLUG = "llmrig"
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 CURATED_SNAPSHOT_DATE = "2026-08-19"
 DEFAULT_OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 HF_MODELS_API = "https://huggingface.co/api/models"
@@ -6395,8 +6395,8 @@ def interactive() -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Cross-platform local LLM readiness with Qwen-first discovery, "
-            "Ollama setup, and benchmarking."
+            "Compatibility and performance intelligence for local AI, with "
+            "Qwen-first model support."
         )
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")

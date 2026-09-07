@@ -1,7 +1,7 @@
-"""Private implementation support for LLMRig Autopilot.
+"""Private implementation support for LLMRig.
 
-This package is intentionally internal. Public compatibility continues to live in
-the top-level :mod:`llmrig` module until a separately reviewed SDK contract exists.
+This package is intentionally internal. The deliberate SDK contract lives in the
+top-level :mod:`llmrig` module; imports from :mod:`_llmrig` are not public API.
 """
 
 from .inventory import (

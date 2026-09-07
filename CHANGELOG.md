@@ -2,6 +2,32 @@
 
 All notable changes to LLMRig will be documented here.
 
+## 0.7.0 - 2026-09-06
+
+### Added
+
+- Add the Autopilot foundation with orthogonal discovery, compatibility,
+  runtime-availability, local-availability, execution, measurement, and
+  recommendation states; unknown facts remain explicit.
+- Add read-only local inventory and `llmrig solve MODEL` planning. Default solve
+  does not download models, install or start runtimes, execute inference, or
+  write benchmark output.
+- Add explicit `llmrig solve MODEL --verify`, which measures at least two
+  comparable, already-local candidates through the unchanged `race-v2`
+  workload and balanced Pareto decision semantics.
+- Add a minimal Python SDK centered on `llmrig.solve(...) -> SolveResult`, with
+  deliberate input and engine exception contracts.
+
+### Evidence, privacy, and release quality
+
+- Keep public solve recipes and results free of native artifact paths while
+  retaining private execution locators only at the inventory-to-runtime seam.
+- Distinguish planning recommendations from measured verification outcomes,
+  including unavailable, failed, measured, and inconclusive states with
+  provenance.
+- Harden release packaging, CI artifact installation checks, publication
+  version gates, security guidance, and project metadata for the 0.7.0 release.
+
 ## 0.6.0 - 2026-08-27
 
 ### Added

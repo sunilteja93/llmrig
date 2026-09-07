@@ -1,12 +1,8 @@
 <h1 align="center">LLMRig</h1>
 
-<p align="center">
-  <strong>Know what your rig can run.</strong>
-</p>
+<p align="center"><strong>Know what your rig can run.</strong></p>
 
-<p align="center">
-  The open compatibility and performance intelligence layer for local AI.
-</p>
+<p align="center">The open compatibility and performance intelligence layer for local AI.</p>
 
 <p align="center">
   <a href="https://github.com/sunilteja93/llmrig/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/sunilteja93/llmrig/actions/workflows/ci.yml/badge.svg"></a>
@@ -16,39 +12,49 @@
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/sunilteja93/llmrig/main/assets/llmrig-terminal.svg" alt="LLMRig local model fit flow" width="100%" />
+  <img src="https://raw.githubusercontent.com/sunilteja93/llmrig/main/assets/llmrig-terminal.svg" alt="LLMRig detect, resolve, assess, solve, and verify flow" width="100%" />
 </p>
 
-LLMRig helps answer one practical question:
+LLMRig determines viable ways to run AI models on real hardware. It keeps model,
+artifact, quantization, runtime, context, and measured performance separate so
+missing evidence does not become a confident recommendation.
 
-> **Which local LLM can this machine actually run well?**
-
-It inspects hardware, resolves logical models and runnable artifacts, identifies runtime paths, estimates compatibility, measures local execution, compares configurations, and preserves reproducible benchmark evidence. Curated setup uses Ollama; measured race execution supports Ollama, llama.cpp, and MLX-LM when compatible artifacts are already local.
-
-### Install
-
-LLMRig is a CLI application, so the recommended installation method is
-[`pipx`](https://pipx.pypa.io/), which installs it in an isolated environment:
+Install the isolated CLI and run the safest useful first command:
 
 ```bash
 pipx install llmrig
+llmrig solve qwen3:0.6b
 ```
 
-Upgrade an existing installation:
+Default `solve` is read-only: it does not download a model, install or start a
+runtime, execute inference, or write benchmark output. Measurement is an explicit
+step with `--verify`, and only already-local candidates are eligible.
+
+```text
+hardware
+  → model and artifact resolution
+  → runtime compatibility and local availability
+  → read-only solve
+  → optional measured verification
+  → reproducible evidence
+```
+
+LLMRig is Qwen-first today. Curated setup uses Ollama. Local race measurement also
+supports llama.cpp and MLX-LM when compatible artifacts and runtimes are already
+present; LLMRig does not install those native runtimes or download their artifacts.
+
+## Install
+
+[`pipx`](https://pipx.pypa.io/) is recommended for the CLI:
 
 ```bash
+pipx install llmrig
 pipx upgrade llmrig
-```
-
-Verify the installed CLI:
-
-```bash
 llmrig --version
 ```
 
-Some system-managed Python installations, including common Homebrew Python setups,
-prevent global `pip` installs under PEP 668. If `pipx` is not available, use a
-virtual environment instead of modifying the system Python:
+If `pipx` is unavailable, use a virtual environment. This also avoids PEP 668
+errors from system-managed Python installations.
 
 ```bash
 python3 -m venv .venv
@@ -56,161 +62,35 @@ source .venv/bin/activate  # macOS/Linux
 python -m pip install llmrig
 ```
 
-On Windows, activate the environment before installing with:
+On Windows PowerShell:
 
 ```powershell
+python -m venv .venv
 .venv\Scripts\Activate.ps1
 python -m pip install llmrig
 ```
 
-Then use LLMRig from anywhere:
+LLMRig supports Python 3.9+ on macOS, Linux, and Windows and has no third-party
+Python runtime dependencies. It can also run directly from a source checkout with
+`python3 llmrig.py`.
 
-```bash
-llmrig doctor
-llmrig can qwen3.8:27b-mlx
-llmrig solve qwen3.8:27b-mlx
-llmrig recommend
-llmrig models --fit
-```
+## Solve first
 
-Or run directly from source without installing:
-
-```bash
-python3 llmrig.py
-```
-
-**LLMRig has no third-party Python runtime dependencies.** The CLI uses only the Python standard library.
-
-```text
-detect hardware
-→ resolve model + artifact
-→ observe runtime + local inventory
-→ assess independent candidate states
-→ optionally execute and measure with explicit benchmark commands
-→ compare measured configurations
-→ preserve evidence
-```
-
-LLMRig is currently **Qwen-first**. The architecture is intended to expand to additional model families, runtimes, GPUs, and platforms without changing the core workflow.
-
-## What LLMRig does
-
-- Detects privacy-safe hardware facts across **macOS, Windows, and Linux**.
-- Separates logical models from GGUF, MLX, Safetensors, and curated Ollama artifacts, with generic read-only Hugging Face resolution.
-- Analyzes compatibility with explicit confidence, evidence provenance, practical context, and unknown handling.
-- Detects Ollama, llama.cpp, and MLX-LM runtime capabilities while keeping installation and current availability separate from LLMRig adapter support.
-- Solves for currently viable configurations using read-only observations, explicit unknowns, blockers, and setup recipes.
-- Recommends and sets up only curated, verified model identifiers through Ollama.
-- Measures local race generation, prompt evaluation, and normalized inference latency through Ollama, llama.cpp, and MLX-LM adapters. The full `bench` workflow, residency measurement, and correctness smoke test remain Ollama-specific.
-- Races at least two unique executable configurations with metric-specific, non-composite results.
-- Exports privacy-safe benchmark passports containing raw per-run evidence and deterministic identities.
-- Verifies passport structure, integrity, aggregates, and privacy entirely offline without inference.
-
-## Current scope
-
-LLMRig remains **Qwen-first**. Its curated catalog supports practical recommendations and setup, while generic Hugging Face resolution inspects repository metadata without downloading model weights. Automatic installation remains limited to manually verified curated identifiers.
-
-Ollama remains LLMRig's only setup/install backend. Race execution and benchmarking also support locally installed llama.cpp and MLX-LM runtimes. Those native adapters require explicit paths to already-local GGUF files or MLX model directories; LLMRig does not download native artifacts during a race.
-
-`llmrig solve` is the read-only planning path. It observes the current machine,
-runtime capabilities, Ollama inventory, and explicitly supplied native artifacts;
-execution and measurement remain separate, explicit commands.
-
-The project name is intentionally broader than Qwen because the long-term direction is to support additional model families and runtimes without changing the user experience:
-
-```text
-hardware → model + artifact → runtime paths → compatibility → measurement → evidence
-```
-
-If you want to add support for another model family, runtime, GPU vendor, or operating system, see [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Requirements
-
-- Python **3.9+**
-- macOS, Windows, or Linux
-- Ollama for automatic model setup and the full benchmark workflow
-- Optional llama.cpp or MLX-LM installations for native race execution
-- Internet access for live discovery and model downloads
-- No third-party Python runtime dependencies
-
-## Quick start
-
-Run the interactive wizard:
-
-```bash
-llmrig
-```
-
-The wizard inspects the machine, recommends a supported model, pulls it if necessary, benchmarks it, and prints the local chat/API details.
-
-Analyze a model and the current machine without changing local state:
-
-```bash
-llmrig solve qwen3.8:27b-mlx
-```
-
-## Commands
-
-### Inspect the machine
-
-```bash
-llmrig doctor
-```
-
-Machine-readable output:
-
-```bash
-llmrig doctor --json
-```
-
-### Check whether a curated model can run
-
-```bash
-llmrig can qwen3.8:27b-mlx
-```
-
-Machine-readable compatibility, confidence, configuration, and evidence:
-
-```bash
-llmrig can qwen3.8:27b-mlx --json
-```
-
-Curated identifiers receive the existing practical compatibility analysis. An
-`owner/repository` Hugging Face ID is resolved through read-only metadata and file
-listings, without downloading weights. LLMRig recognizes evidenced GGUF, MLX, and
-Safetensors artifacts. For generic GGUF and MLX artifacts it reports matching
-llama.cpp or MLX-LM capability candidates and whether those runtimes are locally
-available; Safetensors alone does not imply a runnable path. Runtime installation,
-current availability, format support, and total machine compatibility remain separate.
-Even a detected candidate is not a claim that inference was tested. Memory results
-are conservative planning estimates, and unmeasured runtime overhead, practical
-context, and performance remain explicitly unknown.
-
-`llmrig can` also behaves as a three-state Unix predicate in both human and JSON
-modes: exit `0` means the model can run, exit `1` means it cannot run, and exit
-`2` means compatibility is unknown or the identifier cannot be analyzed.
-
-### Solve for viable configurations
+Analyze a curated model or exact `owner/repository` Hugging Face identifier:
 
 ```bash
 llmrig solve MODEL
 llmrig solve MODEL --json
-llmrig solve MODEL --context TOKENS
-llmrig solve MODEL --local-artifact RUNTIME=PATH
-llmrig solve MODEL --verify
+llmrig solve MODEL --context 32768
+llmrig solve MODEL --local-artifact llama.cpp=/path/to/model.gguf
+llmrig solve MODEL --local-artifact mlx-lm=/path/to/model-directory
 ```
 
-`MODEL` may be a curated ID or alias, or an exact `owner/repository` Hugging
-Face identifier resolved through the existing metadata-only behavior. The
-repeatable `--local-artifact` option accepts an explicitly supplied
-`llama.cpp` GGUF file or `mlx-lm` model directory.
+Hugging Face resolution reads metadata and file listings but does not download
+weights. Native artifacts are inspected only at paths explicitly supplied with
+`--local-artifact`; LLMRig does not scan arbitrary filesystem locations.
 
-Default solve is observational and read-only. It performs no model download,
-runtime install, runtime service start, inference, or benchmark. It does not
-scan arbitrary filesystem locations; native artifacts are inspected only at
-paths supplied with `--local-artifact`.
-
-Solve keeps its evidence dimensions independent:
+Solve reports these evidence dimensions independently:
 
 ```text
 compatible != local
@@ -220,400 +100,250 @@ measurable != measured
 measured != recommended
 ```
 
-Unknown remains unknown. Positive Ollama inventory observations are evidence,
-but unexplained absence from Ollama may remain unknown when inventory discovery
-cannot prove absence. An explicit GGUF or MLX association is user-supplied
-evidence: LLMRig validates the local structure, but does not independently
-attest artifact content identity. Native quantization remains unknown unless it
-is genuinely evidenced. Private local artifact paths never appear in solve JSON
-or human output.
+Unknown is not false. An observed Ollama name is local evidence, not independent
+content attestation. A native model association is supplied by the user: LLMRig
+checks its local structure but does not attest its identity, weights, quality, or
+quantization. Private native paths stay out of public solve results.
 
-Solve does not invent a best runtime, calculate a universal score, or infer
-model quality from memory fit or speed. A practical recommendation requires the
-available evidence to support exactly one runnable configuration without a
-comparable unresolved alternative; otherwise the result remains inconclusive.
-No benchmark verification is performed unless `--verify` is explicitly supplied.
+Solve does not calculate a universal score, infer quality from throughput, or
+promise a winner. It recommends a planning candidate only when the available
+evidence supports exactly one runnable configuration with no comparable unresolved
+alternative. An inconclusive result is valid.
 
-`solve --verify` executes only compatible, already-local candidates backed by an
-LLMRig execution and measurement adapter. It reuses the existing race-v2 workload,
-execution path, 5% noise threshold, and balanced Pareto decision; it does not pull
-models, install or start runtimes, scan for artifacts, or write benchmark passports.
-At least two genuinely comparable executable configurations are required. With
-fewer than two, solve analysis still succeeds but verification is reported as
-unavailable and no inference is attempted. A failed intended competitor invalidates
-the comparison, while a completed race with multiple Pareto members remains
-inconclusive. The original planning recommendation is retained separately from the
-verification candidate set and the measured run recommendation.
+### Verify explicitly
 
-Exit status is independent of whether a model can run:
+```bash
+llmrig solve MODEL \
+  --local-artifact llama.cpp=/path/to/model.gguf \
+  --verify
+```
 
-- `0` = request analyzed successfully, including a completed but inconclusive verification
-- `1` = operational solver or attempted verification execution failure
-- `2` = invalid/unresolvable request, or requested verification is unavailable
+`solve --verify` executes only compatible, already-local, executable, measurable
+candidates. It requires at least two comparable configurations and reuses the
+unchanged `race-v2` workload, two-sample rule, 5% comparison threshold, and balanced
+Pareto decision. It does not pull models, install or start runtimes, scan for
+artifacts, or write passports. Fewer than two candidates makes verification
+unavailable without executing inference; a competitor failure invalidates the
+comparison; multiple Pareto members remain inconclusive.
 
-### Minimal Python SDK
+Solve exit codes are:
+
+- `0`: analysis completed, including a completed but inconclusive verification
+- `1`: an operational solve or attempted verification failure
+- `2`: invalid/unresolvable input or unavailable requested verification
+
+## Minimal Python SDK
 
 ```python
 import llmrig
 
-result = llmrig.solve(
-    "qwen3.8:27b-mlx",
-    context=32768,
-    verify=False,
-)
+result = llmrig.solve("qwen3:0.6b")
 print(result.plan.recommendation_status)
 ```
 
-`llmrig.solve(model, *, context=None, local_artifacts=(), verify=False)` returns
-the same `SolveResult` used by human and JSON CLI output. The default is read-only
-and does not print or terminate the process. `local_artifacts` accepts repeatable
-`RUNTIME=PATH` strings. Invalid or unresolvable requests raise `SolveInputError`;
+The stable entry point is:
+
+```python
+llmrig.solve(
+    model,
+    *,
+    context=None,
+    local_artifacts=(),
+    verify=False,
+) -> llmrig.SolveResult
+```
+
+It prints nothing and never exits the process. `local_artifacts` accepts
+`RUNTIME=PATH` strings. Invalid or unresolvable input raises `SolveInputError`;
 operational failures raise `SolveEngineError`. `SolveResult` and `SolveCandidate`
-are the deliberately exposed result contracts; `_llmrig` remains private.
+are the deliberate public result contracts. `_llmrig` is private implementation.
 
-### Race locally executable configurations
+## Measurement commands
 
-```bash
-llmrig race qwen3.8:27b-mlx
-llmrig race qwen3.8:27b-mlx --json
-```
+The measurement commands share local execution machinery but answer different
+questions:
 
-Add an already-local MLX-LM artifact explicitly:
+| Command | Purpose | Result rule | Writes passports |
+|---|---|---|---|
+| `solve --verify` | Verify a solve candidate set | Balanced Pareto decision, or inconclusive | No |
+| `race` | Measure at least two local configurations | Metric-specific generation, prompt, and latency results | Optional |
+| `choose` | Explain one measured objective | `generation`, `prompt`, `latency`, or balanced | No |
+| `optimize` | Expose measured tradeoffs | Unranked noise-aware Pareto frontier | No |
+| `bench` | Run the full Ollama benchmark | Throughput, residency data when available, and smoke tests | Optional |
 
-```bash
-llmrig race <model> \
-  --local-artifact mlx-lm=/path/to/local-mlx-model
-```
-
-Or add a local GGUF for llama.cpp:
-
-```bash
-llmrig race <model> \
-  --local-artifact llama.cpp=/path/to/model.gguf
-```
-
-When the equivalent Ollama build is already installed, both native artifacts can be
-added for a three-way race:
+Race two already-local native configurations, or combine one with an installed
+equivalent Ollama build:
 
 ```bash
-llmrig race <model> \
-  --local-artifact mlx-lm=/path/to/local-mlx-model \
-  --local-artifact llama.cpp=/path/to/model.gguf
+llmrig race MODEL \
+  --local-artifact llama.cpp=/path/to/model.gguf \
+  --local-artifact mlx-lm=/path/to/model-directory
 ```
 
-`race` measures only configurations that are already local, currently available,
-and backed by an LLMRig execution/benchmark adapter. It never installs runtimes or
-downloads artifacts. At least two executable configurations are required; otherwise
-the command reports the eligible and blocked alternatives without running a benchmark.
-At most one explicit artifact may be supplied for each native runtime. A GGUF target
-must be a non-empty local file; an MLX-LM target must contain an immediate `config.json`
-and at least one immediate non-empty `model*.safetensors` weights file. These are
-structural checks, not proof that the runtime can load the artifact.
-The local-artifact association is user-supplied evidence, not independent proof that
-differently packaged artifacts contain identical model weights or provide identical
-quality. LLMRig passes only explicit local paths to native runtimes and never invokes
-remote model identifiers for native race execution.
+`race` never installs or downloads. At most one explicit artifact per native
+runtime is accepted. A GGUF target must be a non-empty `.gguf` file. An MLX-LM
+target must have an immediate non-empty `config.json` and at least one immediate
+non-empty `model*.safetensors` file. These structural checks do not prove the
+runtime can load the artifact or that differently packaged artifacts have identical
+weights or quality.
 
-Exit `0` means at least two competitors were measured successfully. Exit `1` means
-an attempted execution failed and invalidated the comparison. Exit `2` means the race
-is unavailable or the model could not be resolved. Winners are reported separately
-for measured generation throughput, prompt-evaluation throughput, and normalized inference latency; there
-is no composite score or model-quality claim. Results within 5% are treated as
-inconclusive, and at least two timed runs per competitor are required for a winner.
+Race exit `0` means at least two competitors were measured successfully, `1` means
+execution failed and invalidated the comparison, and `2` means the race is
+unavailable or unresolved. Results within 5% are inconclusive. There is no
+composite result or model-quality claim.
 
-### Explain a measured decision
+Choose an explicit objective from the same measured race path:
 
 ```bash
-llmrig choose <model>
-llmrig choose <model> --objective generation
-llmrig choose <model> --objective prompt --json
-llmrig choose <model> --objective latency
-llmrig choose <model> --objective balanced
+llmrig choose MODEL --objective generation
+llmrig choose MODEL --objective prompt --json
+llmrig choose MODEL --objective latency
+llmrig choose MODEL --objective balanced
 ```
 
-`choose` executes the same local comparison as `race`, then explains a decision for
-one explicit objective. Generation, prompt, and latency decisions reuse the existing
-metric-specific race results, including the two-sample requirement and 5% noise
-threshold. The default `balanced` objective is not a weighted score: it recommends a
-configuration only when exactly one configuration remains on the measured-performance
-Pareto frontier. Multiple frontier members make the decision genuinely inconclusive.
-Race warnings about quantization, artifact equivalence, formats, tokenization, early
-EOS, and user-supplied associations remain visible as caveats.
+The default balanced objective recommends only a unique measured-performance
+Pareto leader. `choose` exit `0` means a recommendation exists, `1` means race
+execution failed, and `2` means the decision is unavailable or inconclusive.
 
-Exit `0` means a defensible recommendation was produced, exit `1` means race execution
-failed, and exit `2` means the decision is unavailable or inconclusive. `choose` never
-writes benchmark passports.
-
-### Optimize measured performance
+Inspect the unranked frontier directly:
 
 ```bash
-llmrig optimize <model>
-llmrig optimize <model> --json
+llmrig optimize MODEL
+llmrig optimize MODEL --json
 ```
 
-`optimize` exposes an unranked, noise-aware Pareto frontier over measurements from the
-same local race path. The current dimensions are generation throughput and prompt-
-evaluation throughput (maximized), plus normalized inference latency (minimized).
-This is a **measured-performance frontier**, not a universal model-quality frontier.
-Memory is not yet a cross-runtime Pareto dimension, context is held constant by the
-race workload, and LLMRig does not infer quality, accuracy, or reasoning from speed.
-LLMRig does not create a universal runtime/model score.
+The active dimensions are generation throughput, prompt-evaluation throughput,
+and normalized inference latency. A dimension is omitted globally if any successful
+competitor lacks two positive finite samples. Missing data is never converted to
+zero. The frontier measures performance only; it does not infer quality, accuracy,
+or reasoning.
 
-A dimension participates only when every successful competitor has at least two valid
-measured samples and a positive finite value for it. Missing, invalid, or non-finite
-values are never treated as zero or as bad; the dimension is omitted globally and
-reported. Fewer than two remaining dimensions makes optimization inconclusive. One configuration dominates another only when it is
-not materially worse on every active dimension and is materially better on at least
-one, with differences within 5% treated as effectively tied. There is no composite
-score and frontier members are not ranked. Measured evidence takes precedence, and
-multiple frontier members mean the performance tradeoff remains unresolved.
-
-Exit `0` means a valid frontier was derived from a completed race, exit `1` means race
-execution failed, and exit `2` means optimization is unavailable or inconclusive.
-`optimize` never writes benchmark passports.
-
-In short: `race` measures, `choose` explains a decision for an explicit objective, and
-`optimize` exposes the measured-performance Pareto frontier. All three accept the same
-local race inputs; none downloads models or installs runtimes.
-
-### List models
-
-Show curated local-ready models plus the newest live Qwen LLM/multimodal candidates:
+Run the Ollama-specific full benchmark:
 
 ```bash
-llmrig models --fit
+llmrig bench --model qwen3.8:27b-mlx --context 32768 --runs 2
+llmrig bench --all-installed --context 32768 --runs 2
+llmrig bench --model qwen3.8:27b-mlx --passport benchmark.passport.json
 ```
 
-Force live refresh:
+`bench` unloads resident Ollama models before measurement and unloads its target
+afterward. It records throughput, Ollama-reported context, accelerator residency
+when available, memory snapshots, and three lightweight correctness smoke tests.
+Reports default to the ignored `benchmarks/` directory. They are local
+configuration checks, not academic quality benchmarks, and memory readings are
+snapshots rather than peak measurements.
 
-```bash
-llmrig models --refresh --fit
-```
+## Benchmark passports
 
-Show the full Qwen Hugging Face organization catalog, including non-LLM artifacts:
-
-```bash
-llmrig models --all --fit
-```
-
-Use only the built-in curated snapshot:
-
-```bash
-llmrig models --offline --fit
-```
-
-### Get a recommendation
-
-```bash
-llmrig recommend
-```
-
-Official models only:
-
-```bash
-llmrig recommend --category official
-```
-
-Community reduced-refusal models only:
-
-```bash
-llmrig recommend --category unrestricted
-```
-
-Prioritize quality:
-
-```bash
-llmrig recommend \
-  --category official \
-  --preference quality
-```
-
-For CLI convenience, `unrestricted`, `uncensored`, and `reduced-refusal` map to the community reduced-refusal category. `restricted` is accepted as an alias for the official category. LLMRig uses **official** and **reduced-refusal** in its output because those labels are more precise.
-
-### Set up a model
-
-```bash
-llmrig setup --category official
-```
-
-Or choose an exact curated model:
-
-```bash
-llmrig setup \
-  --model qwen3.8:27b-mlx \
-  --context 32768
-```
-
-If a known alias of the selected curated build is already installed, LLMRig reuses it when possible.
-
-### Benchmark installed models
-
-One model:
-
-```bash
-llmrig bench \
-  --model qwen3.8:27b-mlx \
-  --context 32768 \
-  --runs 2 \
-  --passport benchmark.passport.json
-```
-
-All installed supported Qwen models:
-
-```bash
-llmrig bench \
-  --all-installed \
-  --context 32768 \
-  --runs 2
-```
-
-LLMRig deduplicates installed aliases that resolve to the same Ollama model ID.
-
-### Benchmark passports
-
-A benchmark passport is a versioned, privacy-safe JSON record of one measured
-execution configuration. It records the public model/build identifier, runtime, safe hardware
-summary, applied workload, individual timed samples, reproducible aggregates, and
-evidence provenance. Use `bench --passport FILE` for a single model, or
-`race --passport-dir DIR` to export each successfully measured race competitor.
-
-Validate a passport locally without network access or inference:
+A passport is a versioned, privacy-filtered JSON record of one measured execution
+configuration. Export one with `bench --passport FILE` or one per successfully
+measured competitor with `race --passport-dir DIR`.
 
 ```bash
 llmrig passport verify benchmark.passport.json
 ```
 
-Verification checks the schema, SHA-256 identity and configuration fingerprints,
-raw-sample aggregates, impossible states, and privacy constraints. It establishes
-only that the document is internally consistent according to LLMRig's schema. The
-hashes are identifiers and integrity checks, not signatures, independent proof, or
-benchmark certification.
+Verification is offline and read-only. It checks schema, SHA-256 identifiers and
+configuration fingerprints, aggregates, impossible states, and known privacy
+constraints. These hashes are deterministic identity and integrity checks—not
+signatures, independent attestations, benchmark certification, or proof that a
+claimed measurement is true. User-supplied native artifact IDs are path-independent
+and do not attest file contents.
 
-`passport_id` is the SHA-256 hash of canonical passport content with `passport_id`
-itself excluded. It identifies the exact record, including its timestamp and
-measurements. `configuration_fingerprint` hashes the logical model, public
-artifact/build identifier, artifact digest when genuinely available, format,
-quantization, runtime and version, execution
-adapter, privacy-safe hardware facts, exact workload and generation settings, and
-benchmark method version. It excludes the passport ID, timestamp, measurements,
-aggregates, run-only warnings, and output path. The LLMRig tool version is record
-metadata; the benchmark method version is the compatibility boundary and must change
-when the procedure changes.
+Passports are `exact` when configuration fingerprints match.
+`comparable_with_warnings` means the logical model and workload match but artifact,
+format, quantization, runtime, runtime version, or hardware differs.
+`not_comparable` means the logical model or workload differs. None of these labels
+ranks results. A failed race exports no competitor passports.
 
-Two passports are `exact` when their configuration fingerprints match, even though
-their passport IDs and measured results may differ. `comparable_with_warnings` means
-the logical model and workload match but artifact, format, quantization, runtime,
-runtime version, or hardware differs. `not_comparable` means the logical model or
-workload—including context—differs. These classifications do not rank results.
-For user-supplied native targets, the public artifact identifier is path-independent
-and intentionally does not attest content identity. Matching native configuration
-fingerprints therefore do not prove that two user-supplied files contain the same weights.
+## Other commands
 
-Race passports are exported only when the overall race completes successfully. If
-any intended competitor fails, the race remains failed and `--passport-dir` writes
-no standalone competitor passports that could hide the incomplete comparison.
+Inspect hardware and Ollama readiness:
 
-Passport aggregates are derived only from the recorded timed-run samples. Throughput
-means are rounded to two decimal places, wall-latency means to four decimal places,
-using Python's deterministic `round` behavior; generated tokens are the sum of the
-runtime-reported per-run counts. Warmups are recorded as policy metadata and never
-enter samples or aggregates.
+```bash
+llmrig doctor
+llmrig doctor --json
+```
 
-### Run project checks
+Check three-state compatibility for a curated ID or exact Hugging Face repository:
 
-Offline:
+```bash
+llmrig can qwen3.8:27b-mlx
+llmrig can owner/repository --json
+```
+
+`can` exits `0` for compatible, `1` for incompatible, and `2` for unknown or
+unresolvable. Memory fit is a conservative planning estimate, not a prediction of
+performance.
+
+Inspect the Qwen-first catalog:
+
+```bash
+llmrig models --offline --fit
+llmrig models --fit
+llmrig models --refresh --fit
+llmrig models --all --fit
+```
+
+The curated snapshot is the only layer eligible for automatic setup. Live discovery
+is informational and cannot establish package size, fit, runtime compatibility, or
+installation trust from a repository name.
+
+Use the curated recommendation/setup workflow when desired:
+
+```bash
+llmrig recommend --category official --preference balanced
+llmrig setup --model qwen3.8:27b-mlx --context 32768
+```
+
+`setup` is mutating: after confirmation it may pull a curated Ollama artifact and
+run the full benchmark. Running bare `llmrig` starts the interactive version of that
+workflow. LLMRig does not install Ollama itself.
+
+Run offline project checks, or explicitly include live discovery:
 
 ```bash
 llmrig check
-```
-
-Include live Hugging Face discovery:
-
-```bash
 llmrig check --online
 ```
 
-## Model discovery and safety
+## Evidence and scope
 
-LLMRig deliberately separates **discovery** from **automatic installation**.
+LLMRig models compatibility as:
 
-The curated catalog contains local model identifiers that LLMRig may pull automatically. Live discovery queries the official Qwen organization on Hugging Face so new releases can appear without requiring an immediate LLMRig release.
+```text
+hardware × model × artifact × quantization × runtime × context × measured performance
+```
 
-A newly discovered repository is **discovery only**. LLMRig does not infer package size, hardware fit, or Ollama compatibility from a repository name. A model becomes eligible for one-command setup only after its identifier, package size, context capability, backend support, and provenance are verified and added to the curated catalog.
+Important boundaries:
 
-Community reduced-refusal discovery is best-effort and is not an authoritative registry. Third-party models should be reviewed before use.
+- verified, inferred, measured, estimated, and unknown are not interchangeable
+- discovery does not establish installation trust
+- local does not imply executable, measurable, measured, or recommended
+- benchmark evidence outranks planning heuristics
+- throughput does not establish model quality
+- there is no universal model/runtime score
+- prediction and prediction-versus-measurement calibration are not implemented yet
 
-## Official vs reduced-refusal models
-
-**Official** entries are upstream Qwen models distributed through the selected local backend.
-
-**Community reduced-refusal** entries are third-party derivatives that modify model behavior to reduce refusals. Their authors may use terms such as `uncensored`, `unrestricted`, or `abliterated`.
-
-Reduced refusal behavior does not imply better reasoning, accuracy, safety, or reliability. Review model provenance, licensing, and benchmark results before relying on a derivative for important work.
-
-## Hardware fit and context
-
-LLMRig deliberately leaves headroom for the operating system, inference runtime, KV cache, other applications, and GPU/runtime buffers.
-
-For Apple Silicon, CPU and GPU share unified memory. For discrete GPUs, LLMRig favors configurations likely to stay mostly or fully on the accelerator when VRAM can be detected.
-
-The model's advertised maximum context is not automatically used as the default. Longer context allocations consume more memory, so LLMRig starts conservatively and increases context only when there is comfortable headroom.
-
-Hardware-fit results are estimates. **The benchmark on the user's actual machine is the final check.**
-
-## Benchmarking
-
-LLMRig unloads currently resident Ollama models before a benchmark and unloads the target model afterward. This reduces cross-model memory contamination and makes comparisons more reproducible.
-
-Each benchmark records:
-
-- generation tokens/second
-- prompt-evaluation tokens/second
-- load and total duration
-- Ollama-reported context length
-- accelerator residency when available
-- RAM/swap snapshots when available
-- three lightweight deterministic correctness smoke tests
-
-Reports are written under `benchmarks/` as JSON and Markdown. That directory is ignored by Git by default so local benchmark data is not published accidentally. Review any benchmark before sharing it.
-
-These are local performance/configuration checks, **not academic model-quality benchmarks**. Memory values are snapshots rather than peak-memory measurements.
-
-## Contributing
-
-LLMRig is open source and contributions are welcome.
-
-Good first contribution areas include:
-
-- additional model families
-- new Ollama/local-backend model mappings
-- AMD, Intel, and NVIDIA GPU detection improvements
-- Windows and Linux hardware testing
-- reproducible benchmark improvements
-- new hardware profiles and recommendation rules
-- documentation and usability improvements
-- tests for new operating systems and model variants
-
-Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Bug reports, feature ideas, model-support requests, and benchmark improvements are all welcome through GitHub issues.
+Official curated entries are upstream Qwen models distributed through the selected
+local backend. Community reduced-refusal entries are third-party derivatives. Their
+behavior does not imply better reasoning, accuracy, safety, or reliability; review
+their provenance and licensing before use.
 
 ## Development
 
-Run the full local validation set before opening a pull request:
-
 ```bash
-python3 -m py_compile llmrig.py
+python3 -m compileall -q llmrig.py _llmrig
 python3 -m unittest discover -s tests -v
+python3 llmrig.py --version
+python3 llmrig.py solve --help
 python3 llmrig.py check
-python3 llmrig.py models --offline --fit
 ```
 
-With internet access:
-
-```bash
-python3 llmrig.py check --online
-```
-
-GitHub Actions also runs compile, unit-test, and sanity-check jobs on Linux, macOS, and Windows.
+See [CONTRIBUTING.md](https://github.com/sunilteja93/llmrig/blob/main/CONTRIBUTING.md)
+for architecture and evidence invariants and
+[RELEASING.md](https://github.com/sunilteja93/llmrig/blob/main/RELEASING.md) for the
+release sequence.
 
 ## Repository layout
 
@@ -621,51 +351,43 @@ GitHub Actions also runs compile, unit-test, and sanity-check jobs on Linux, mac
 llmrig/
 ├── .github/
 │   ├── ISSUE_TEMPLATE/
-│   ├── workflows/
-│   │   ├── ci.yml
-│   │   ├── publish-to-pypi.yml
-│   │   └── refresh-profile-on-release.yml
-│   └── PULL_REQUEST_TEMPLATE.md
-├── assets/
-│   └── llmrig-terminal.svg
-├── _llmrig/
-│   ├── __init__.py
-│   ├── inventory.py
-│   ├── planning.py
-│   ├── privacy.py
-│   └── solve.py
+│   ├── dependabot.yml
+│   ├── PULL_REQUEST_TEMPLATE.md
+│   └── workflows/
+│       ├── ci.yml
+│       ├── codeql.yml
+│       └── publish-to-pypi.yml
+├── _llmrig/                 # private implementation package
+├── assets/llmrig-terminal.svg
 ├── tests/
-│   ├── __init__.py
-│   ├── test_autopilot_foundation.py
-│   ├── test_autopilot_solve.py
-│   └── test_llmrig.py
-├── .gitignore
 ├── CHANGELOG.md
+├── CITATION.cff
 ├── CODE_OF_CONDUCT.md
 ├── CONTRIBUTING.md
 ├── LICENSE
-├── pyproject.toml
 ├── README.md
+├── RELEASING.md
 ├── SECURITY.md
-└── llmrig.py
+├── llmrig.py                # CLI and small public SDK facade
+└── pyproject.toml
 ```
 
 ## Roadmap
 
-The roadmap is intentionally community-driven. Credible next directions include additional model families; llama.cpp, MLX-LM, and other execution adapters; richer GPU and runtime support; explainable comparison and decision intelligence; Pareto-style configuration optimization; and standardized privacy-safe benchmark sharing.
+Future work may include broader model-family coverage, a RigGraph representation,
+privacy-preserving community benchmark evidence, prediction and calibration, and
+stable runtime adapter/plugin interfaces. These are directions, not current product
+claims. New functionality must preserve provenance and must not turn discovery
+metadata into automatic installation trust.
 
-The rule for new functionality is simple: **be useful, be reproducible, and do not turn unverified discovery metadata into an automatic install decision.**
+## License and references
 
-## License
+LLMRig is released under the
+[MIT License](https://github.com/sunilteja93/llmrig/blob/main/LICENSE).
 
-LLMRig is released under the [MIT License](LICENSE).
-
-## Primary references
-
-- Qwen official Hugging Face organization: `https://huggingface.co/Qwen`
-- Qwen3.8 official repository: `https://github.com/QwenLM/Qwen3.8`
-- Hugging Face Hub API: `https://huggingface.co/docs/huggingface_hub/package_reference/hf_api`
-- Ollama documentation: `https://docs.ollama.com/`
-- Ollama generate API: `https://docs.ollama.com/api/generate`
-- Ollama running-model API: `https://docs.ollama.com/api/ps`
-- Qwen3.8 Ollama tags: `https://ollama.com/library/qwen3.8/tags`
+- [Qwen on Hugging Face](https://huggingface.co/Qwen)
+- [Qwen3.8 repository](https://github.com/QwenLM/Qwen3.8)
+- [Hugging Face Hub API](https://huggingface.co/docs/huggingface_hub/package_reference/hf_api)
+- [Ollama documentation](https://docs.ollama.com/)
+- [Ollama generate API](https://docs.ollama.com/api/generate)
+- [Ollama running-model API](https://docs.ollama.com/api/ps)

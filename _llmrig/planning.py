@@ -1,4 +1,4 @@
-"""Orthogonal, evidence-aware candidate state for the future solve engine."""
+"""Orthogonal, evidence-aware candidate state for the solve engine."""
 
 from __future__ import annotations
 

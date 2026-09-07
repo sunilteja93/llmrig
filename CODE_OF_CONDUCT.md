@@ -19,4 +19,7 @@ Harassment, threats, discriminatory abuse, personal attacks, deliberate disrupti
 
 Maintainers may edit or remove comments, close discussions, reject contributions, or restrict participation when behavior materially harms the project or its community.
 
-For serious conduct issues, use a private contact method available through the repository or GitHub rather than posting sensitive details publicly.
+For serious conduct issues, use a private contact method published on the repository
+owner's GitHub profile rather than posting sensitive details publicly. If no private
+maintainer channel is available, use GitHub's platform reporting tools for conduct
+that violates GitHub policy.

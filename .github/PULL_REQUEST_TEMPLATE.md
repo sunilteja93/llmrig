@@ -4,7 +4,7 @@ Describe the change and why it is useful.
 
 ## How was it tested?
 
-- [ ] `python -m py_compile llmrig.py`
+- [ ] `python -m compileall -q llmrig.py _llmrig`
 - [ ] `python -m unittest discover -s tests -v`
 - [ ] `python llmrig.py check`
 - [ ] I tested platform/model-specific behavior on real hardware when the change requires it
@@ -19,3 +19,5 @@ If this PR changes model sizes, tags, context limits, platform support, or hardw
 - [ ] I updated documentation for user-visible changes
 - [ ] I did not add secrets, private paths, tokens, or unreviewed benchmark output
 - [ ] Newly discovered third-party models are not made auto-installable without verification
+- [ ] Compatibility, recommendation, and performance claims are backed by evidence and preserve unknown states
+- [ ] I considered wheel/sdist, versioning, and release-workflow impact where relevant

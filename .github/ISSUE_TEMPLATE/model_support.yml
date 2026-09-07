@@ -21,11 +21,11 @@ body:
     id: sources
     attributes:
       label: Primary sources
-      description: Link upstream model/runtime documentation for identifiers, size, context, and platform support.
+      description: Link upstream model/runtime documentation for identifiers, artifact format and size, context, platform support, and runtime commands. Search results and repository names alone are not evidence.
     validations:
       required: true
   - type: textarea
     id: hardware
     attributes:
       label: Hardware tested
-      description: If you tested it, include OS, CPU/GPU, RAM/VRAM, context, and result.
+      description: If you tested it, include OS, CPU/GPU, RAM/VRAM, runtime version, artifact/quantization, context, and result. Remove private paths and machine identity first.
