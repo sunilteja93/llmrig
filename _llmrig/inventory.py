@@ -1,4 +1,4 @@
-"""Read-only local artifact inventory for future Autopilot planning."""
+"""Read-only local artifact inventory for solve planning."""
 
 from __future__ import annotations
 

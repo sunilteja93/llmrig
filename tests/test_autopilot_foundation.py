@@ -3,6 +3,7 @@ import copy
 import json
 import os
 import pickle
+import re
 import subprocess
 import sys
 import tempfile
@@ -69,7 +70,7 @@ class AutopilotFoundationTests(unittest.TestCase):
 
         self.assertEqual(Path(llmrig.__file__).name, "llmrig.py")
         self.assertTrue(_llmrig.__spec__.submodule_search_locations)
-        self.assertEqual(llmrig.VERSION, "0.6.0")
+        self.assertEqual(llmrig.VERSION, "0.7.0")
         for symbol in (
             "Confidence",
             "RecommendationEvidence",
@@ -87,6 +88,41 @@ class AutopilotFoundationTests(unittest.TestCase):
             "DecisionResult",
         ):
             self.assertEqual(getattr(llmrig, symbol).__module__, "llmrig")
+
+    def test_public_solve_surface_is_deliberate(self):
+        for symbol in (
+            "solve",
+            "SolveResult",
+            "SolveCandidate",
+            "SolveError",
+            "SolveInputError",
+            "SolveEngineError",
+        ):
+            self.assertTrue(hasattr(llmrig, symbol), symbol)
+        for internal in (
+            "SolveInputs",
+            "SolveRequest",
+            "SolvePlan",
+            "SolveVerification",
+            "SolveMeasurement",
+            "ReproducibleRecipe",
+        ):
+            self.assertFalse(hasattr(llmrig, internal), internal)
+
+    def test_release_metadata_is_consistent(self):
+        root = Path(__file__).resolve().parents[1]
+        changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+        citation = (root / "CITATION.cff").read_text(encoding="utf-8")
+        heading = re.search(r"^## ([0-9.]+) - ([0-9-]+)$", changelog, re.MULTILINE)
+        cited_version = re.search(r"^version: ([0-9.]+)$", citation, re.MULTILINE)
+        cited_date = re.search(r"^date-released: ([0-9-]+)$", citation, re.MULTILINE)
+        self.assertIsNotNone(heading)
+        self.assertIsNotNone(cited_version)
+        self.assertIsNotNone(cited_date)
+        self.assertEqual(heading.group(1), llmrig.VERSION)
+        self.assertEqual(cited_version.group(1), llmrig.VERSION)
+        self.assertEqual(cited_date.group(1), heading.group(2))
+        self.assertEqual(cited_date.group(1), heading.group(2))
 
     def test_private_package_is_declared_for_installed_distribution(self):
         project = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(

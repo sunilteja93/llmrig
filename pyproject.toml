@@ -11,11 +11,46 @@ requires-python = ">=3.9"
 license = "MIT"
 license-files = ["LICENSE"]
 dependencies = []
+authors = [
+  {name = "Sunil Kumar Vadlamani"},
+]
+maintainers = [
+  {name = "Sunil Kumar Vadlamani"},
+]
+keywords = [
+  "local-ai",
+  "llm",
+  "hardware-compatibility",
+  "benchmarking",
+  "ollama",
+  "llama-cpp",
+  "mlx-lm",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: System :: Hardware",
+  "Topic :: System :: Benchmark",
+]
 
 [project.urls]
 Homepage = "https://github.com/sunilteja93/llmrig"
 Repository = "https://github.com/sunilteja93/llmrig"
 Issues = "https://github.com/sunilteja93/llmrig/issues"
+Changelog = "https://github.com/sunilteja93/llmrig/blob/main/CHANGELOG.md"
+Security = "https://github.com/sunilteja93/llmrig/blob/main/SECURITY.md"
+Documentation = "https://github.com/sunilteja93/llmrig#readme"
 
 [project.scripts]
 llmrig = "llmrig:main"

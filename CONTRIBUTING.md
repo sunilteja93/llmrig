@@ -1,104 +1,123 @@
 # Contributing to LLMRig
 
-Thanks for helping improve LLMRig. The project is intended to be community-driven, and contributions of code, tests, documentation, hardware results, and verified model metadata are welcome.
+LLMRig welcomes focused contributions to code, tests, documentation, hardware
+detection, model metadata, runtime support, and reproducible benchmark behavior.
 
-## Before you start
+## Product and evidence invariants
 
-Please keep these principles in mind:
+LLMRig is the compatibility and performance intelligence layer between hardware,
+models, artifacts, quantization, runtimes, context, and measured performance. Keep
+these facts independent:
 
-1. **Prefer verified facts over guesses.** Model sizes, context limits, backend support, and model identifiers should come from upstream or primary sources.
-2. **Discovery is not trust.** A model found through live search must not automatically become installable.
-3. **Keep hardware recommendations conservative.** Fitting weights into memory is not the same as providing a usable local experience.
-4. **Keep benchmarks reproducible.** Model, quantization, context, runtime version, and test settings should be explicit.
-5. **Keep platform claims evidence-based.** If a path is not tested on real hardware, say so.
+```text
+unknown != false
+compatible != local
+local != executable
+executable != measurable
+measurable != measured
+measured != recommended
+```
 
-## Ways to contribute
+A result must say whether an important fact is verified, measured, inferred,
+estimated, or unknown. Benchmark evidence outranks planning heuristics. There is no
+benchmark winner without sufficient evidence, and an inconclusive result or explicit
+tradeoff is valid. Never infer model quality, accuracy, or reasoning from throughput.
 
-Useful contributions include:
+Discovery is not installation trust. A model found through live metadata must not
+become auto-installable until its runtime identifier and provenance are reviewed and
+curated. Native file association is user-supplied evidence, not independent content
+attestation; structural validation does not prove model identity or weight
+equivalence.
 
-- support for additional model families
-- support for additional local inference backends
-- verified Ollama model identifiers and aliases
-- Apple Silicon, NVIDIA, AMD, and Intel hardware detection
-- Windows and Linux hardware fixes
-- model-fit and context heuristics
-- benchmark improvements
-- documentation and examples
-- unit tests and regression tests
-- issue triage and reproducible bug reports
+Private paths may cross only the narrow validation, inventory, and runtime invocation
+seams. Retained locator state belongs in `InventoryTarget` and `ExecutionTarget`.
+Paths must never enter public/shareable result structures, JSON, human output, errors,
+logs, benchmark passports, exception messages, `repr`, or serialized copies.
+
+## Architecture
+
+`llmrig.py` is the installed CLI module and deliberately small public SDK facade. It
+still contains established hardware, discovery, compatibility, runtime, benchmark,
+race, decision, and command behavior. Do not broadly reorganize it as part of an
+unrelated contribution.
+
+`_llmrig/` is the private implementation namespace for incremental extraction:
+
+- `inventory.py` observes already-local artifacts without installation or execution
+- `planning.py` holds orthogonal candidate states and evidence-bearing assessments
+- `privacy.py` rejects local paths and identities at public-data boundaries
+- `solve.py` builds schema-versioned solve results and verification state
+
+The stable SDK centers on `llmrig.solve(...) -> SolveResult`, `SolveCandidate`, and
+the deliberate `SolveInputError` / `SolveEngineError` contracts. Do not expose
+orchestration internals merely because they are convenient to import.
+
+Default solve is observational and read-only. It must not download models, install
+or start runtimes, execute inference, write passports, or scan arbitrary paths.
+Verification is explicit and must use only already-local candidates.
 
 ## Development setup
 
-LLMRig currently uses only the Python standard library.
-
-After cloning your fork locally:
+LLMRig supports Python 3.9+ and has no third-party runtime dependencies. From a
+source checkout, run:
 
 ```bash
-cd llmrig
-python3 -m py_compile llmrig.py
+python3 -m compileall -q llmrig.py _llmrig
 python3 -m unittest discover -s tests -v
+python3 llmrig.py --version
+python3 llmrig.py --help
+python3 llmrig.py solve --help
 python3 llmrig.py check
+git diff --check
 ```
 
-With internet access:
+`python3 llmrig.py check --online` also exercises live Hugging Face discovery; it is
+optional because it requires network access and upstream availability.
 
-```bash
-python3 llmrig.py check --online
-```
+For packaging changes, additionally build a wheel and sdist, inspect both, install
+the wheel in a clean environment, and verify `import llmrig`, `import _llmrig`, the
+console entry point, SDK read-only solve, version metadata, and empty runtime
+requirements. Do not commit `build/`, `dist/`, virtual environments, or `*.egg-info`.
 
-## Pull-request workflow
+## Pull requests
 
-1. Fork the repository.
-2. Create a focused branch, for example `feature/amd-vram-detection`.
-3. Make the smallest coherent change that solves the problem.
-4. Add or update tests for behavior changes.
-5. Run the local validation commands above.
-6. Update documentation when user-visible behavior changes.
-7. Open a pull request and explain what changed, why, and how it was tested.
+1. Create a focused branch from the current development base.
+2. Make the smallest coherent change that solves the problem.
+3. Add or update tests for behavior changes.
+4. Update documentation for user-visible changes.
+5. Run the relevant validation above on affected platforms where practical.
+6. Explain evidence sources, privacy impact, and any packaging/release impact.
 
-## Adding a curated model
+Model sizes, identifiers, context limits, formats, platform support, and runtime
+commands need primary/upstream sources. Do not fabricate support or add a stub
+adapter merely to claim another model family or runtime.
 
-A curated model can be auto-pulled, so the bar is higher than for discovery-only results.
+## Curated models and runtimes
 
-A model contribution should include:
+LLMRig is Qwen-first today. A curated model may be pulled automatically through the
+existing Ollama setup path, so additions require an exact upstream identity,
+download/package size, quantization or precision, context evidence, platform/runtime
+support, input modalities, provenance links, and tests where practical.
 
-- upstream model name and publisher
-- exact local-backend identifier/tag
-- verified package/download size
-- quantization/precision
-- supported platform/backend
-- advertised maximum context
-- input modalities
-- source links used for verification
-- whether the model is official or a community derivative
-- at least one test or validation path when practical
+New model families and runtimes should preserve the generic workflow and current CLI
+semantics. Detection of an installed executable is distinct from runtime
+availability, LLMRig execution support, model executability, and measurement
+support. Do not turn any one of those facts into the others.
 
-Do not mark a newly discovered third-party repository as auto-installable solely because its name looks correct.
+## Benchmark and schema changes
 
-## Adding a new model family
+Changes to prompts, warmups, timing, token counts, context limits, comparison rules,
+or correctness tests can invalidate comparability. Methodology changes require an
+explicit benchmark/race method version change plus tests and documentation. Do not
+change `race-v2`, its two-sample rule, or its 5% threshold incidentally.
 
-LLMRig is Qwen-first today, but new model families are welcome. Prefer changes that keep the generic workflow intact:
+Public schema changes need the same care: preserve deterministic JSON and version a
+schema only when its contract actually changes. Benchmark passports are reproducible
+records, not signatures, independent attestations, certifications, or proof that a
+claimed measurement is true.
 
-```text
-hardware → discover → recommend → setup → benchmark
-```
+## Community expectations
 
-A new family should ideally have a clear discovery source, a curated local-ready layer, and tests that prevent one family from breaking another.
-
-## Benchmark changes
-
-Benchmark changes should preserve comparability. If you change a prompt, timing method, warm-up behavior, context allocation, or correctness test, explain why and update tests/documentation.
-
-Never commit benchmark output that contains private paths, tokens, secrets, usernames, or other sensitive machine metadata.
-
-## Style
-
-- Keep the CLI dependency-free unless a dependency provides clear value that cannot reasonably be achieved with the standard library.
-- Prefer readable Python over clever Python.
-- Keep functions focused and testable.
-- Avoid silently changing existing CLI behavior.
-- Add comments where platform-specific behavior would otherwise be surprising.
-
-## Questions and ideas
-
-Open a feature-request issue, or a GitHub Discussion if Discussions are enabled, before investing in a large implementation. That gives maintainers and contributors a chance to agree on direction first.
+Follow [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). Before starting a broad change, open
+a focused issue describing the problem, evidence, and intended scope so maintainers
+can confirm direction.

@@ -23,22 +23,22 @@ jobs:
           - windows-latest
         python-version:
           - "3.9"
-          - "3.13"
+          - "3.14"
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Compile
-        run: python -m py_compile llmrig.py
+        run: python -m compileall -q llmrig.py _llmrig
 
       - name: Install LLMRig
         run: python -m pip install .
@@ -54,11 +54,86 @@ jobs:
       - name: LLMRig sanity check
         run: python llmrig.py check
 
+  package:
+    name: Validate release artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Build wheel and source distribution
+        run: |
+          python -m pip install build
+          python -m build
+
+      - name: Inspect distribution contents
+        shell: bash
+        run: |
+          python - <<'PY'
+          import glob
+          import tarfile
+          import zipfile
+
+          wheels = glob.glob("dist/*.whl")
+          sdists = glob.glob("dist/*.tar.gz")
+          assert len(wheels) == 1, wheels
+          assert len(sdists) == 1, sdists
+          with zipfile.ZipFile(wheels[0]) as archive:
+              names = set(archive.namelist())
+              assert "llmrig.py" in names
+              assert "_llmrig/__init__.py" in names
+              assert "_llmrig/solve.py" in names
+          with tarfile.open(sdists[0]) as archive:
+              names = {name.split("/", 1)[-1] for name in archive.getnames()}
+              assert "llmrig.py" in names
+              assert "_llmrig/__init__.py" in names
+              assert "_llmrig/solve.py" in names
+              assert "pyproject.toml" in names
+          PY
+
+      - name: Install and smoke-test wheel
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/llmrig-wheel"
+          "$RUNNER_TEMP/llmrig-wheel/bin/python" -m pip install --no-deps dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/llmrig-wheel/bin/python" - <<'PY'
+          import importlib.metadata
+          import _llmrig
+          import llmrig
+
+          assert llmrig.VERSION == "0.7.0"
+          assert importlib.metadata.version("llmrig") == "0.7.0"
+          assert not (importlib.metadata.requires("llmrig") or [])
+          result = llmrig.solve("qwen3:0.6b")
+          assert isinstance(result, llmrig.SolveResult)
+          assert result.verification.status == "not_requested"
+          PY
+          "$RUNNER_TEMP/llmrig-wheel/bin/llmrig" --version
+          "$RUNNER_TEMP/llmrig-wheel/bin/llmrig" --help >/dev/null
+
+      - name: Install source distribution
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/llmrig-sdist"
+          "$RUNNER_TEMP/llmrig-sdist/bin/python" -m pip install --upgrade pip setuptools
+          "$RUNNER_TEMP/llmrig-sdist/bin/python" -m pip install --no-deps dist/*.tar.gz
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/llmrig-sdist/bin/python" -c "import llmrig, _llmrig; assert llmrig.VERSION == '0.7.0'"
+
   ci-success:
     name: CI Success
     if: ${{ always() }}
     needs:
       - test
+      - package
     runs-on: ubuntu-latest
 
     steps:
@@ -66,8 +141,13 @@ jobs:
         shell: bash
         run: |
           echo "Test matrix result: ${{ needs.test.result }}"
+          echo "Package validation result: ${{ needs.package.result }}"
           if [ "${{ needs.test.result }}" != "success" ]; then
             echo "One or more required LLMRig CI jobs failed."
+            exit 1
+          fi
+          if [ "${{ needs.package.result }}" != "success" ]; then
+            echo "LLMRig release-artifact validation failed."
             exit 1
           fi
           echo "All required LLMRig CI jobs passed."

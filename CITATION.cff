@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "If you use LLMRig, please cite this software."
+title: LLMRig
+type: software
+authors:
+  - family-names: Vadlamani
+    given-names: Sunil Kumar
+version: 0.7.0
+date-released: 2026-09-06
+repository-code: "https://github.com/sunilteja93/llmrig"
+url: "https://github.com/sunilteja93/llmrig"
+license: MIT
