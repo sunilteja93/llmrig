@@ -68,6 +68,7 @@ Then use LLMRig from anywhere:
 ```bash
 llmrig doctor
 llmrig can qwen3.8:27b-mlx
+llmrig solve qwen3.8:27b-mlx
 llmrig recommend
 llmrig models --fit
 ```
@@ -83,11 +84,10 @@ python3 llmrig.py
 ```text
 detect hardware
 → resolve model + artifact
-→ identify runtime paths
-→ estimate compatibility
-→ execute locally
-→ measure
-→ compare
+→ observe runtime + local inventory
+→ assess independent candidate states
+→ optionally execute and measure with explicit benchmark commands
+→ compare measured configurations
 → preserve evidence
 ```
 
@@ -99,6 +99,7 @@ LLMRig is currently **Qwen-first**. The architecture is intended to expand to ad
 - Separates logical models from GGUF, MLX, Safetensors, and curated Ollama artifacts, with generic read-only Hugging Face resolution.
 - Analyzes compatibility with explicit confidence, evidence provenance, practical context, and unknown handling.
 - Detects Ollama, llama.cpp, and MLX-LM runtime capabilities while keeping installation and current availability separate from LLMRig adapter support.
+- Solves for currently viable configurations using read-only observations, explicit unknowns, blockers, and setup recipes.
 - Recommends and sets up only curated, verified model identifiers through Ollama.
 - Measures local race generation, prompt evaluation, and normalized inference latency through Ollama, llama.cpp, and MLX-LM adapters. The full `bench` workflow, residency measurement, and correctness smoke test remain Ollama-specific.
 - Races at least two unique executable configurations with metric-specific, non-composite results.
@@ -110,6 +111,10 @@ LLMRig is currently **Qwen-first**. The architecture is intended to expand to ad
 LLMRig remains **Qwen-first**. Its curated catalog supports practical recommendations and setup, while generic Hugging Face resolution inspects repository metadata without downloading model weights. Automatic installation remains limited to manually verified curated identifiers.
 
 Ollama remains LLMRig's only setup/install backend. Race execution and benchmarking also support locally installed llama.cpp and MLX-LM runtimes. Those native adapters require explicit paths to already-local GGUF files or MLX model directories; LLMRig does not download native artifacts during a race.
+
+`llmrig solve` is the read-only planning path. It observes the current machine,
+runtime capabilities, Ollama inventory, and explicitly supplied native artifacts;
+execution and measurement remain separate, explicit commands.
 
 The project name is intentionally broader than Qwen because the long-term direction is to support additional model families and runtimes without changing the user experience:
 
@@ -137,6 +142,12 @@ llmrig
 ```
 
 The wizard inspects the machine, recommends a supported model, pulls it if necessary, benchmarks it, and prints the local chat/API details.
+
+Analyze a model and the current machine without changing local state:
+
+```bash
+llmrig solve qwen3.8:27b-mlx
+```
 
 ## Commands
 
@@ -178,6 +189,55 @@ context, and performance remain explicitly unknown.
 `llmrig can` also behaves as a three-state Unix predicate in both human and JSON
 modes: exit `0` means the model can run, exit `1` means it cannot run, and exit
 `2` means compatibility is unknown or the identifier cannot be analyzed.
+
+### Solve for viable configurations
+
+```bash
+llmrig solve MODEL
+llmrig solve MODEL --json
+llmrig solve MODEL --context TOKENS
+llmrig solve MODEL --local-artifact RUNTIME=PATH
+```
+
+`MODEL` may be a curated ID or alias, or an exact `owner/repository` Hugging
+Face identifier resolved through the existing metadata-only behavior. The
+repeatable `--local-artifact` option accepts an explicitly supplied
+`llama.cpp` GGUF file or `mlx-lm` model directory.
+
+Default solve is observational and read-only. It performs no model download,
+runtime install, runtime service start, inference, or benchmark. It does not
+scan arbitrary filesystem locations; native artifacts are inspected only at
+paths supplied with `--local-artifact`.
+
+Solve keeps its evidence dimensions independent:
+
+```text
+compatible != local
+local != executable
+executable != measurable
+measurable != measured
+measured != recommended
+```
+
+Unknown remains unknown. Positive Ollama inventory observations are evidence,
+but unexplained absence from Ollama may remain unknown when inventory discovery
+cannot prove absence. An explicit GGUF or MLX association is user-supplied
+evidence: LLMRig validates the local structure, but does not independently
+attest artifact content identity. Native quantization remains unknown unless it
+is genuinely evidenced. Private local artifact paths never appear in solve JSON
+or human output.
+
+Solve does not invent a best runtime, calculate a universal score, or infer
+model quality from memory fit or speed. A practical recommendation requires the
+available evidence to support exactly one runnable configuration without a
+comparable unresolved alternative; otherwise the result remains inconclusive.
+No benchmark verification is performed by solve.
+
+Exit status is independent of whether a model can run:
+
+- `0` = request analyzed successfully, including incompatible or inconclusive results
+- `1` = operational solver failure
+- `2` = invalid or unresolvable request
 
 ### Race locally executable configurations
 
@@ -536,8 +596,16 @@ llmrig/
 │   └── PULL_REQUEST_TEMPLATE.md
 ├── assets/
 │   └── llmrig-terminal.svg
+├── _llmrig/
+│   ├── __init__.py
+│   ├── inventory.py
+│   ├── planning.py
+│   ├── privacy.py
+│   └── solve.py
 ├── tests/
 │   ├── __init__.py
+│   ├── test_autopilot_foundation.py
+│   ├── test_autopilot_solve.py
 │   └── test_llmrig.py
 ├── .gitignore
 ├── CHANGELOG.md

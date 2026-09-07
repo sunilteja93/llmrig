@@ -4549,6 +4549,115 @@ def _autopilot_explicit_native_inventory(
     return provider.observe()
 
 
+def solve_for_request(request: Any, local_artifact_values: Sequence[str]) -> Any:
+    """Compose existing read-only observations into the private solve domain."""
+    from _llmrig.solve import SolveInputs, solve, terminal_solve_result
+
+    identifier = request.model or ""
+    curated = CURATED_SOURCE.resolve(identifier)
+    if curated is None:
+        parts = identifier.strip().split("/")
+        if len(parts) != 2 or not all(parts):
+            return terminal_solve_result(
+                request,
+                "invalid_request",
+                "invalid_identifier",
+                Confidence.UNKNOWN,
+                "MODEL must be a curated ID/alias or an exact owner/repository identifier.",
+            )
+    profile = hardware_profile()
+    if curated is not None:
+        compatibility = compatibility_for_identifier(identifier, profile)
+        model = curated.model
+        curated_specs = (curated,)
+        artifacts = (curated.artifact,)
+        artifact_compatibilities = (compatibility,)
+        capabilities = runtime_capabilities(profile)
+        runtime_candidates: Tuple[RuntimeCandidate, ...] = ()
+        resolution_status = "resolved"
+        resolution_confidence = Confidence.VERIFIED
+        resolution_evidence = (
+            RecommendationEvidence(
+                "curated-metadata",
+                f"curated snapshot {CURATED_SNAPSHOT_DATE}",
+                "the requested model and artifact were resolved from the curated catalog",
+            ),
+        )
+    else:
+        resolution = HF_SOURCE.resolve(identifier)
+        if resolution.status != "resolved" or resolution.model is None:
+            if resolution.status == "network_error":
+                return terminal_solve_result(
+                    request,
+                    "engine_failure",
+                    resolution.status,
+                    Confidence.UNKNOWN,
+                    "Hugging Face model resolution failed operationally.",
+                )
+            return terminal_solve_result(
+                request,
+                "invalid_request",
+                resolution.status,
+                Confidence.UNKNOWN,
+                "MODEL could not be resolved as an accessible exact repository identifier.",
+            )
+        compatibility = assess_generic_runtime_compatibility(resolution, profile)
+        model = resolution.model
+        artifacts = resolution.artifacts
+        capabilities = compatibility.runtime_capabilities
+        runtime_candidates = compatibility.runtime_candidates
+        artifact_compatibilities = (compatibility,)
+        resolution_status = resolution.status
+        resolution_confidence = resolution.confidence
+        resolution_evidence = resolution.evidence
+
+    ollama_targets = _autopilot_ollama_inventory()
+    ollama_records = tuple(target.record for target in ollama_targets)
+    if curated is not None:
+        matched_ollama_records = tuple(
+            (candidate.artifact.artifact_id, record)
+            for candidate in curated_specs
+            for record in ollama_records
+            if any(
+                model_name_matches(identifier, record.public_artifact_id)
+                for identifier in candidate.ids
+            )
+        )
+    else:
+        matched_ollama_records = ()
+    explicit_targets = _autopilot_explicit_native_inventory(
+        model.model_id, local_artifact_values
+    )
+    inputs = SolveInputs(
+        request=request,
+        logical_model_id=model.model_id,
+        model_name=model.name,
+        resolution_status=resolution_status,
+        resolution_confidence=resolution_confidence,
+        resolution_evidence=resolution_evidence,
+        compatibility=compatibility,
+        artifact_compatibilities=artifact_compatibilities,
+        artifacts=tuple(artifacts),
+        runtime_candidates=tuple(runtime_candidates),
+        capabilities=tuple(capabilities),
+        matched_ollama_records=matched_ollama_records,
+        ollama_inventory_conclusive=bool(ollama_records),
+        explicit_native_records=tuple(target.record for target in explicit_targets),
+        evidence_factory=RecommendationEvidence,
+        high_confidence=Confidence.HIGH,
+        unknown_confidence=Confidence.UNKNOWN,
+    )
+    return solve(inputs)
+
+
+def solve_exit_code(result: Any) -> int:
+    if result.status == "analyzed":
+        return 0
+    if result.status == "invalid_request":
+        return 2
+    return 1
+
+
 def race_configurations(
     identifier: str,
     profile: Dict[str, Any],
@@ -5384,6 +5493,92 @@ def command_can(args: argparse.Namespace) -> int:
     return compatibility_exit_code(result)
 
 
+def command_solve(args: argparse.Namespace) -> int:
+    from _llmrig.solve import SolveRequest, terminal_solve_result
+
+    try:
+        parsed_artifacts = parse_local_artifact_values(args.local_artifact)
+        request = SolveRequest(
+            args.model,
+            args.context,
+            tuple(runtime for runtime, _ in parsed_artifacts),
+        )
+        result = solve_for_request(request, args.local_artifact)
+    except ValueError as exc:
+        request = locals().get("request", SolveRequest(None))
+        result = terminal_solve_result(
+            request,
+            "invalid_request",
+            "invalid_request",
+            Confidence.UNKNOWN,
+            str(exc),
+        )
+    except Exception:
+        request = locals().get("request", SolveRequest(None))
+        result = terminal_solve_result(
+            request,
+            "engine_failure",
+            "engine_failure",
+            Confidence.UNKNOWN,
+            "The read-only solve engine failed operationally.",
+        )
+
+    if args.json:
+        print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+        return solve_exit_code(result)
+
+    print(f"\n{PROJECT_NAME} solve")
+    print("------------")
+    print(f"Status:       {result.status}")
+    print(f"Model:        {result.logical_model_id or request.model or 'unresolved'}")
+    print(f"Resolution:   {result.resolution_status}")
+    print(f"Confidence:   {result.resolution_confidence.value.upper()}")
+    if request.context_tokens is not None:
+        print(f"Context:      {request.context_tokens:,} tokens")
+    if result.error:
+        print(f"Error:        {result.error}")
+    for candidate in result.candidates:
+        states = candidate.assessments
+        print(f"\nCandidate: {candidate.candidate_id}")
+        print(f"  Runtime: {candidate.configuration.runtime}")
+        print(f"  Artifact: {candidate.configuration.artifact_id}")
+        print(f"  Format: {candidate.configuration.artifact_format}")
+        print(f"  Quantization: {candidate.configuration.quantization or 'unknown'}")
+        print(f"  Discovery: {states.discovery.state.value}")
+        print(f"  Compatibility: {states.compatibility.state.value}")
+        print(f"  Runtime availability: {states.runtime_availability.state.value}")
+        print(f"  Local availability: {states.local_availability.state.value}")
+        print(f"  Execution: {states.execution.state.value}")
+        print(f"  Measurement support: {states.measurement_capability.state.value}")
+        print(f"  Measurement: {states.measurement.state.value}")
+        print(f"  Recommendation: {states.recommendation.state.value}")
+        print(
+            "  Local identity attested: "
+            + (
+                "unknown"
+                if candidate.local_identity_attested is None
+                else "yes"
+                if candidate.local_identity_attested
+                else "no"
+            )
+        )
+        print(f"  Recipe: {candidate.recipe.status}")
+        if candidate.recipe.private_locator_required:
+            print("  Private locator: required locally and omitted from public output")
+        for blocker in candidate.recipe.blockers:
+            print(f"  Blocker: {blocker}")
+        for step in candidate.recipe.steps:
+            print(f"  Step: {step}")
+    print("\nPlan")
+    print(f"  Recommendation: {result.plan.recommendation_status}")
+    if result.plan.recommended_candidate_id:
+        print(f"  Candidate: {result.plan.recommended_candidate_id}")
+    print(f"  Reason: {result.plan.reason}")
+    for unknown in result.plan.unknowns:
+        print(f"  Unknown: {unknown}")
+    return solve_exit_code(result)
+
+
 def command_setup(args: argparse.Namespace) -> int:
     profile = hardware_profile()
     print_doctor(profile)
@@ -5961,6 +6156,19 @@ def build_parser() -> argparse.ArgumentParser:
     can.add_argument("model", help="Curated ID/alias or owner/repository Hugging Face ID.")
     can.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
 
+    solve_parser = subparsers.add_parser(
+        "solve", help="Analyze read-only viable configurations for a model."
+    )
+    solve_parser.add_argument(
+        "model", help="Curated ID/alias or exact owner/repository Hugging Face ID."
+    )
+    solve_parser.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
+    solve_parser.add_argument("--context", type=int, help="Requested context in tokens.")
+    solve_parser.add_argument(
+        "--local-artifact", action="append", default=[], metavar="RUNTIME=PATH",
+        help="Inspect an explicit already-local MLX-LM directory or llama.cpp GGUF file.",
+    )
+
     setup = subparsers.add_parser(
         "setup",
         help="Pull a recommended curated model and optionally benchmark it.",
@@ -6092,6 +6300,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return command_recommend(args)
     if args.command == "can":
         return command_can(args)
+    if args.command == "solve":
+        return command_solve(args)
     if args.command == "setup":
         return command_setup(args)
     if args.command == "bench":

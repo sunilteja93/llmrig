@@ -24,6 +24,14 @@ from .planning import (
     RecommendationState,
     RuntimeAvailabilityState,
 )
+from .solve import (
+    ReproducibleRecipe,
+    SOLVE_SCHEMA_VERSION,
+    SolveCandidate,
+    SolvePlan,
+    SolveRequest,
+    SolveResult,
+)
 
 __all__ = [
     "CandidateAssessment",
@@ -42,4 +50,10 @@ __all__ = [
     "PlanningCandidate",
     "RecommendationState",
     "RuntimeAvailabilityState",
+    "ReproducibleRecipe",
+    "SOLVE_SCHEMA_VERSION",
+    "SolveCandidate",
+    "SolvePlan",
+    "SolveRequest",
+    "SolveResult",
 ]
