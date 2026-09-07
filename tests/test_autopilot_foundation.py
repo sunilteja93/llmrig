@@ -323,6 +323,7 @@ with mock.patch('subprocess.run') as run, \\
             "_llmrig/inventory.py",
             "_llmrig/planning.py",
             "_llmrig/privacy.py",
+            "_llmrig/solve.py",
         ):
             ast.parse(
                 (root / relative).read_text(encoding="utf-8"),
