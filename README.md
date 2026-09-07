@@ -12,12 +12,34 @@
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/sunilteja93/llmrig/main/assets/llmrig-terminal.svg" alt="LLMRig detect, resolve, assess, solve, and verify flow" width="100%" />
+  <img src="https://raw.githubusercontent.com/sunilteja93/llmrig/main/assets/llmrig-terminal.svg" alt="LLMRig v0.7 Autopilot foundation: detect, resolve, assess, solve, and verify flow" width="100%" />
 </p>
 
 LLMRig determines viable ways to run AI models on real hardware. It keeps model,
 artifact, quantization, runtime, context, and measured performance separate so
 missing evidence does not become a confident recommendation.
+
+## Autopilot foundation
+
+LLMRig v0.7 introduces the reasoning and verification foundation for an Autopilot
+for local AI. `solve` reasons across hardware × model × artifact × quantization ×
+runtime × context × measured performance:
+
+```bash
+llmrig solve MODEL
+llmrig solve MODEL --verify
+```
+
+v0.7 ships the reasoning and verification foundation for Autopilot, not a fully
+autonomous operator: the current workflow does not automatically acquire models,
+install or start runtimes, configure the system, or perform other action stages.
+
+Default `solve` is read-only. It does not install runtimes, download models, start
+services, scan arbitrary filesystem locations, execute inference, or write
+benchmark output. A planning recommendation is distinct from a measured
+recommendation. Verification is explicit and requires at least two comparable,
+already-local, executable, and measurable configurations. Benchmark evidence
+outranks heuristics, and unknown stays unknown.
 
 Install the isolated CLI and run the safest useful first command:
 
@@ -25,10 +47,6 @@ Install the isolated CLI and run the safest useful first command:
 pipx install llmrig
 llmrig solve qwen3:0.6b
 ```
-
-Default `solve` is read-only: it does not download a model, install or start a
-runtime, execute inference, or write benchmark output. Measurement is an explicit
-step with `--verify`, and only already-local candidates are eligible.
 
 ```text
 hardware
@@ -74,7 +92,7 @@ LLMRig supports Python 3.9+ on macOS, Linux, and Windows and has no third-party
 Python runtime dependencies. It can also run directly from a source checkout with
 `python3 llmrig.py`.
 
-## Solve first
+## Autopilot: solve first
 
 Analyze a curated model or exact `owner/repository` Hugging Face identifier:
 
@@ -245,7 +263,7 @@ llmrig passport verify benchmark.passport.json
 
 Verification is offline and read-only. It checks schema, SHA-256 identifiers and
 configuration fingerprints, aggregates, impossible states, and known privacy
-constraints. These hashes are deterministic identity and integrity checks—not
+constraints. These hashes are deterministic identity and integrity checks, not
 signatures, independent attestations, benchmark certification, or proof that a
 claimed measurement is true. User-supplied native artifact IDs are path-independent
 and do not attest file contents.
@@ -374,11 +392,23 @@ llmrig/
 
 ## Roadmap
 
-Future work may include broader model-family coverage, a RigGraph representation,
-privacy-preserving community benchmark evidence, prediction and calibration, and
-stable runtime adapter/plugin interfaces. These are directions, not current product
-claims. New functionality must preserve provenance and must not turn discovery
-metadata into automatic installation trust.
+### Current
+
+- evidence-gated, read-only planning
+- explicit measured verification
+
+### Future possibilities
+
+- broader model-family and runtime intelligence
+- RigGraph
+- prediction and calibration
+- stable runtime adapter/plugin interfaces
+- opt-in acquisition, configuration, and action stages
+
+These are directions, not current product claims or commitments. Current `solve`
+does not download models, install or start runtimes, configure the system, or
+autonomously manage models or runtimes. New functionality must preserve provenance
+and must not turn discovery metadata into automatic installation trust.
 
 ## License and references
 
