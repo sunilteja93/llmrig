@@ -128,6 +128,13 @@ class InventoryTarget:
         raise self._serialization_error()
 
 
+def _execution_locator(target: InventoryTarget) -> str:
+    """Return a locator only for the internal inventory-to-execution bridge."""
+    if not isinstance(target, InventoryTarget):
+        raise TypeError("execution locator requires an inventory target")
+    return target._locator
+
+
 class InventoryProvider(Protocol):
     """Observation-only source of artifacts already present on this machine."""
 

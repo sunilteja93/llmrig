@@ -28,9 +28,11 @@ from .solve import (
     ReproducibleRecipe,
     SOLVE_SCHEMA_VERSION,
     SolveCandidate,
+    SolveMeasurement,
     SolvePlan,
     SolveRequest,
     SolveResult,
+    SolveVerification,
 )
 
 __all__ = [
@@ -53,7 +55,9 @@ __all__ = [
     "ReproducibleRecipe",
     "SOLVE_SCHEMA_VERSION",
     "SolveCandidate",
+    "SolveMeasurement",
     "SolvePlan",
     "SolveRequest",
     "SolveResult",
+    "SolveVerification",
 ]
