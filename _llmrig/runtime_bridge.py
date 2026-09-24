@@ -2,7 +2,9 @@
 
 This module keeps runtime observation in one adapter registry while preserving the
 legacy :class:`llmrig.RuntimeCapability` schema consumed by compatibility and solve.
-It is deliberately read-only and does not install, start, download, or execute.
+It never installs, starts, or downloads a runtime or model. Execution support flags
+only describe code paths that LLMRig can use when the user explicitly requests a
+measured verification.
 """
 
 from __future__ import annotations
@@ -17,16 +19,14 @@ _LLMRIG_EXECUTION_SUPPORTED = {
     "ollama": True,
     "llama.cpp": True,
     "mlx-lm": True,
-    # oMLX is externally execution-capable, but LLMRig does not invoke it until
-    # the OpenAI-compatible execution adapter lands in the next v0.8 slice.
-    "omlx": False,
+    "omlx": True,
 }
 
 _LLMRIG_BENCHMARK_SUPPORTED = {
     "ollama": True,
     "llama.cpp": True,
     "mlx-lm": True,
-    "omlx": False,
+    "omlx": True,
 }
 
 
