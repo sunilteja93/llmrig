@@ -150,6 +150,13 @@ class OllamaRuntimeActions(_BaseActions):
                 "Ollama is not installed.",
                 ("LLMRig does not install Ollama automatically",),
             )
+        readiness = self.start(legacy)
+        if not readiness.success:
+            return RuntimeActionOutcome(
+                readiness.status,
+                "Ollama must be ready before its runtime-native artifact can be acquired.",
+                readiness.blockers,
+            )
         try:
             completed = subprocess.run(
                 ["ollama", "pull", artifact_id],
@@ -166,7 +173,8 @@ class OllamaRuntimeActions(_BaseActions):
                 "failed", "Ollama pull returned an error for the selected artifact."
             )
         return RuntimeActionOutcome(
-            "completed", "Ollama acquired the selected runtime-native artifact."
+            "completed",
+            "Ollama acquired the selected runtime-native artifact after confirming service readiness.",
         )
 
 
