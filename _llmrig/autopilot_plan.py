@@ -1,7 +1,7 @@
 """Deterministic, read-only Autopilot plan construction.
 
 This module converts the existing privacy-safe solve result into a stable plan
-contract.  It performs no downloads, runtime changes, model loads, or inference.
+contract. It performs no downloads, runtime changes, model loads, or inference.
 Future apply/receipt stages consume this contract rather than recomputing intent.
 """
 
@@ -14,6 +14,7 @@ from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 from .autopilot_actions import ActionKind, PlannedAction
 from .privacy import validate_public_text
+from .runtime_actions import runtime_actions_for
 
 
 AUTOPILOT_PLAN_SCHEMA_VERSION = "0.9"
@@ -155,12 +156,11 @@ def _candidate_from_payload(payload: Mapping[str, Any]) -> AutopilotCandidate:
     recipe = payload.get("recipe")
     if not isinstance(recipe, Mapping):
         recipe = {}
-    configuration = payload
     candidate_id = str(payload.get("candidate_id") or "")
-    runtime = str(configuration.get("runtime") or "unknown")
-    artifact_id = str(configuration.get("artifact_id") or "")
-    artifact_format = str(configuration.get("artifact_format") or "Unknown")
-    quantization = configuration.get("quantization")
+    runtime = str(payload.get("runtime") or "unknown")
+    artifact_id = str(payload.get("artifact_id") or "")
+    artifact_format = str(payload.get("artifact_format") or "Unknown")
+    quantization = payload.get("quantization")
     if quantization is not None:
         quantization = str(quantization)
     context_tokens = payload.get("context_tokens")
@@ -200,12 +200,26 @@ def _candidate_from_payload(payload: Mapping[str, Any]) -> AutopilotCandidate:
 
 def _actions_for(candidate: AutopilotCandidate) -> Tuple[PlannedAction, ...]:
     actions = []
+    action_adapter = runtime_actions_for(candidate.runtime)
 
     if candidate.local_availability == "not_available":
         source_is_exact_hf = candidate.artifact_id.startswith("hf://")
-        blockers = () if source_is_exact_hf else (
-            "artifact acquisition requires an exact evidenced source",
+        runtime_native = bool(
+            action_adapter is not None
+            and action_adapter.native_acquisition_supported
+            and not source_is_exact_hf
         )
+        if source_is_exact_hf:
+            evidence = (candidate.artifact_id,)
+            blockers = ()
+        elif runtime_native:
+            evidence = (
+                "the selected runtime exposes an explicit native acquisition path",
+            )
+            blockers = ()
+        else:
+            evidence = ()
+            blockers = ("artifact acquisition requires an exact evidenced source",)
         actions.append(
             PlannedAction(
                 "a01-acquire-artifact",
@@ -213,12 +227,15 @@ def _actions_for(candidate: AutopilotCandidate) -> Tuple[PlannedAction, ...]:
                 candidate.runtime,
                 "Acquire the selected model artifact from its evidenced source.",
                 True,
-                (candidate.artifact_id,) if source_is_exact_hf else (),
+                evidence,
                 blockers,
             )
         )
 
     if candidate.runtime_availability == "unavailable":
+        start_supported = bool(
+            action_adapter is not None and action_adapter.start_supported
+        )
         actions.append(
             PlannedAction(
                 "a02-prepare-runtime",
@@ -227,10 +244,18 @@ def _actions_for(candidate: AutopilotCandidate) -> Tuple[PlannedAction, ...]:
                 "Prepare and start the selected local runtime.",
                 True,
                 ("runtime availability was observed as unavailable",),
+                ()
+                if start_supported
+                else (
+                    "the runtime is unavailable and LLMRig has no automatic start path for it",
+                ),
             )
         )
 
     if candidate.execution != "executable":
+        load_supported = bool(
+            candidate.runtime in {"omlx", "ollama", "mlx-lm", "llama.cpp"}
+        )
         actions.append(
             PlannedAction(
                 "a03-load-model",
@@ -239,6 +264,9 @@ def _actions_for(candidate: AutopilotCandidate) -> Tuple[PlannedAction, ...]:
                 "Load or register the selected artifact with the runtime.",
                 True,
                 ("candidate is not currently evidenced as executable",),
+                ()
+                if load_supported
+                else ("LLMRig has no model-load path for this runtime",),
             )
         )
 
