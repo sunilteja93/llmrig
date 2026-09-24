@@ -9,7 +9,7 @@ from unittest import mock
 import llmrig
 from _llmrig import cli, runtime_bridge
 from _llmrig.inventory import InventoryRecord, InventoryTarget
-from _llmrig.omlx_api import OmlxMeasurement, OmlxModelStatus
+from _llmrig.omlx_api import OmlxHfDownloadRecord, OmlxMeasurement, OmlxModelStatus
 from _llmrig.omlx_verify import (
     OmlxExecutionAdapter,
     inventory_targets_from_statuses,
@@ -118,10 +118,74 @@ class OmlxVerifyTests(unittest.TestCase):
 
     def test_inventory_rejects_display_id_without_source_provenance(self):
         statuses = (
-            OmlxModelStatus("org/model", None, "local", True, 32768),
+            OmlxModelStatus("model", None, "local", True, 32768),
         )
         self.assertEqual(
             inventory_targets_from_statuses(llmrig, "org/model", statuses), ()
+        )
+
+    def test_inventory_accepts_unique_completed_dashboard_download_provenance(self):
+        statuses = (
+            OmlxModelStatus("model", None, "local", False, 32768),
+        )
+        downloads = (
+            OmlxHfDownloadRecord("org/model", "completed"),
+        )
+        targets = inventory_targets_from_statuses(
+            llmrig,
+            "org/model",
+            statuses,
+            downloads,
+        )
+        self.assertEqual(len(targets), 1)
+        record = targets[0].record
+        self.assertEqual(record.public_artifact_id, "model")
+        self.assertEqual(record.logical_model_id, "org/model")
+        self.assertEqual(record.association_kind, "runtime_reported_hf_download")
+        self.assertEqual(record.identity_confidence, llmrig.Confidence.HIGH)
+        self.assertTrue(
+            any(
+                item.source == "oMLX completed Hugging Face download registry"
+                for item in record.identity_evidence
+            )
+        )
+        serialized = json.dumps(record.to_dict())
+        self.assertNotIn("model_path", serialized)
+        self.assertNotIn("/Users/", serialized)
+
+    def test_inventory_rejects_incomplete_dashboard_download(self):
+        statuses = (
+            OmlxModelStatus("model", None, "local", False, 32768),
+        )
+        downloads = (
+            OmlxHfDownloadRecord("org/model", "downloading"),
+        )
+        self.assertEqual(
+            inventory_targets_from_statuses(
+                llmrig,
+                "org/model",
+                statuses,
+                downloads,
+            ),
+            (),
+        )
+
+    def test_inventory_rejects_ambiguous_completed_download_leaf(self):
+        statuses = (
+            OmlxModelStatus("model", None, "local", False, 32768),
+        )
+        downloads = (
+            OmlxHfDownloadRecord("org/model", "completed"),
+            OmlxHfDownloadRecord("other/model", "completed"),
+        )
+        self.assertEqual(
+            inventory_targets_from_statuses(
+                llmrig,
+                "org/model",
+                statuses,
+                downloads,
+            ),
+            (),
         )
 
     def test_inventory_fails_closed_when_source_maps_to_multiple_server_ids(self):
