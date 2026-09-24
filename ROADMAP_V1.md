@@ -16,16 +16,18 @@ Given a model and a machine, LLMRig should determine viable execution paths acro
 6. **Prediction + calibration** — predictions are explicitly separated from measurements and continuously checked against real benchmark evidence.
 7. **Public ecosystem** — integrations and adapters should make LLMRig useful to runtime and model communities instead of competing with them.
 
-## v0.8 — Ecosystem foundation
+## v0.8 — Ecosystem foundation — shipped
 
-- Introduce a stable runtime-adapter contract.
-- Add first-class oMLX capability detection.
-- Move existing Ollama / MLX-LM / llama.cpp knowledge behind adapters incrementally.
-- Improve exact Hugging Face model resolution and artifact classification.
-- Add `llmrig runtimes` to explain local runtime capabilities and evidence.
-- Keep `solve` read-only unless the user explicitly chooses an action.
+v0.8.0 establishes the runtime/evidence foundation for the next Autopilot stage:
 
-## v0.9 — Autopilot actions
+- Common runtime-adapter contract across oMLX, Ollama, MLX-LM, and llama.cpp.
+- First-class oMLX capability detection, provenance-safe local inventory, and explicit measured verification.
+- `llmrig runtimes` for read-only runtime capability and readiness evidence.
+- Hardened exact Hugging Face artifact classification for format, quantization, context, and provenance.
+- Adapter-backed `solve` runtime candidate construction while keeping default solve read-only.
+- Explicit `solve --verify` measurement without surprise installation, download, or filesystem scans.
+
+## v0.9 — Autopilot actions — next
 
 - Add explicit plan/apply separation.
 - Support opt-in artifact acquisition for trusted, evidenced sources.
