@@ -91,7 +91,7 @@ class OmlxSolveCliTests(unittest.TestCase):
             ),
         )
 
-    def test_mlx_repository_surfaces_omlx_without_claiming_local_or_measurable(self):
+    def test_mlx_repository_surfaces_omlx_without_claiming_local(self):
         omlx = self.runtime_probe(
             "omlx",
             installed=False,
@@ -116,6 +116,8 @@ class OmlxSolveCliTests(unittest.TestCase):
             llmrig, "installed_ollama_models", return_value=[]
         ), mock.patch.object(
             runtime_bridge, "probe_runtimes", return_value=(omlx, mlx_lm)
+        ), mock.patch(
+            "_llmrig.omlx_verify.observe_omlx_inventory", return_value=()
         ), contextlib.redirect_stdout(output):
             self.assertEqual(cli.main(["solve", "org/model", "--json"]), 0)
 
@@ -136,7 +138,11 @@ class OmlxSolveCliTests(unittest.TestCase):
         )
         self.assertEqual(
             candidate["assessments"]["measurement_capability"]["state"],
-            "not_measurable",
+            "measurable",
+        )
+        self.assertEqual(
+            candidate["assessments"]["execution"]["state"],
+            "not_executable",
         )
         self.assertNotEqual(
             payload["plan"]["recommended_candidate_id"], candidate["candidate_id"]
