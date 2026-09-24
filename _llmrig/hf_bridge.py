@@ -10,8 +10,7 @@ from __future__ import annotations
 
 import urllib.parse
 from contextlib import contextmanager
-from dataclasses import replace
-from typing import Any, Iterator, Mapping, Sequence, Tuple
+from typing import Any, Iterator, Mapping, Optional, Sequence, Tuple
 
 from .hf_artifacts import (
     base_model_metadata,
@@ -53,7 +52,7 @@ def _legacy_format(format_name: str) -> str:
     return "Safetensors" if format_name == "safetensors" else format_name
 
 
-def _positive_int(value: Any) -> int | None:
+def _positive_int(value: Any) -> Optional[int]:
     try:
         parsed = int(value)
     except (TypeError, ValueError):
