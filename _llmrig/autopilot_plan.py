@@ -202,7 +202,7 @@ def _actions_for(candidate: AutopilotCandidate) -> Tuple[PlannedAction, ...]:
     actions = []
     action_adapter = runtime_actions_for(candidate.runtime)
 
-    if candidate.local_availability == "not_available":
+    if candidate.local_availability != "available":
         source_is_exact_hf = candidate.artifact_id.startswith("hf://")
         runtime_native = bool(
             action_adapter is not None
@@ -225,14 +225,26 @@ def _actions_for(candidate: AutopilotCandidate) -> Tuple[PlannedAction, ...]:
                 "a01-acquire-artifact",
                 ActionKind.ACQUIRE_ARTIFACT,
                 candidate.runtime,
-                "Acquire the selected model artifact from its evidenced source.",
+                "Acquire or resolve the selected model artifact from its evidenced source.",
                 True,
                 evidence,
                 blockers,
             )
         )
 
-    if candidate.runtime_availability == "unavailable":
+    if candidate.runtime_availability == "unknown":
+        actions.append(
+            PlannedAction(
+                "a02-prepare-runtime",
+                ActionKind.START_RUNTIME,
+                candidate.runtime,
+                "Resolve the selected local runtime before execution.",
+                True,
+                (),
+                ("runtime availability is unknown",),
+            )
+        )
+    elif candidate.runtime_availability == "unavailable":
         start_supported = bool(
             action_adapter is not None and action_adapter.start_supported
         )
@@ -281,6 +293,13 @@ def _actions_for(candidate: AutopilotCandidate) -> Tuple[PlannedAction, ...]:
         )
     )
     return tuple(actions)
+
+
+def _setup_viable(candidate: AutopilotCandidate) -> bool:
+    if candidate.discovery != "discovered" or candidate.compatibility != "compatible":
+        return False
+    actions = _actions_for(candidate)
+    return bool(actions) and not any(action.blockers for action in actions)
 
 
 def _machine_tuple(machine: Mapping[str, Any]) -> Tuple[Tuple[str, Any], ...]:
@@ -359,10 +378,34 @@ def build_autopilot_plan(
     if selected_candidate_id and selected is None:
         blockers.append("the recommended candidate is not present in the candidate set")
         selected_candidate_id = None
+
+    # v0.8 solve answers which configuration is runnable *now*. Autopilot needs a
+    # separate setup-path decision: if exactly one compatible candidate can be
+    # made runnable through fully supported actions, select that path without
+    # claiming it is a measured-performance winner.
+    if selected_candidate_id is None and solve_payload.get("status") == "analyzed":
+        setup_candidates = tuple(candidate for candidate in candidates if _setup_viable(candidate))
+        if len(setup_candidates) == 1:
+            selected = setup_candidates[0]
+            selected_candidate_id = selected.candidate_id
+            recommendation_status = "setup_selected"
+            recommendation_reason = (
+                "Exactly one compatible candidate has a complete, supported Autopilot setup path. "
+                "This is a setup selection, not a performance ranking."
+            )
+        elif len(setup_candidates) > 1:
+            recommendation_status = "inconclusive"
+            recommendation_reason = (
+                "Multiple compatible Autopilot setup paths remain; LLMRig will not rank them "
+                "without additional evidence or measurement."
+            )
+        else:
+            recommendation_status = "inconclusive"
+
     if selected_candidate_id is None:
         blockers.append("no unique evidenced candidate is selected for apply")
 
-    actions = _actions_for(selected) if selected is not None else ()
+    actions = _actions_for(selected) if selected is not None and selected_candidate_id else ()
     unknowns = list(_strings(solve_payload.get("unknowns")))
     unknowns.extend(_strings(solve_plan.get("unknowns")))
 
