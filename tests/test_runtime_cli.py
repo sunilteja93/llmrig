@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from typing import Optional, Tuple
 
 import llmrig
 from _llmrig import cli
@@ -11,13 +13,13 @@ def _probe(
     runtime: str,
     *,
     installed: bool,
-    service_available: bool | None,
-    version: str | None = None,
-    cli_path: str | None = None,
-    formats: tuple[str, ...] = (),
-    api: str | None = None,
-    blockers: tuple[str, ...] = (),
-    unknowns: tuple[str, ...] = (),
+    service_available: Optional[bool],
+    version: Optional[str] = None,
+    cli_path: Optional[str] = None,
+    formats: Tuple[str, ...] = (),
+    api: Optional[str] = None,
+    blockers: Tuple[str, ...] = (),
+    unknowns: Tuple[str, ...] = (),
 ) -> RuntimeProbe:
     return RuntimeProbe(
         runtime=runtime,
@@ -36,7 +38,7 @@ def _probe(
 
 
 def test_runtime_probe_public_path_hides_home(monkeypatch):
-    monkeypatch.setattr("pathlib.Path.home", lambda: __import__("pathlib").Path("/Users/private-user"))
+    monkeypatch.setattr("pathlib.Path.home", lambda: Path("/Users/private-user"))
     probe = _probe(
         "omlx",
         installed=True,
