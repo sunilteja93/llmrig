@@ -106,7 +106,7 @@ class OmlxVerifyTests(unittest.TestCase):
         self.assertEqual(len(targets), 1)
         record = targets[0].record
         self.assertEqual(record.runtime, "omlx")
-        self.assertEqual(record.public_artifact_id, "org--model")
+        self.assertEqual(record.public_artifact_id, "hf://org/model/mlx")
         self.assertEqual(record.logical_model_id, "org/model")
         self.assertEqual(record.artifact_format, "MLX")
         self.assertEqual(record.association_kind, "runtime_reported_hf_source")
@@ -139,7 +139,7 @@ class OmlxVerifyTests(unittest.TestCase):
         )
         self.assertEqual(len(targets), 1)
         record = targets[0].record
-        self.assertEqual(record.public_artifact_id, "model")
+        self.assertEqual(record.public_artifact_id, "hf://org/model/mlx")
         self.assertEqual(record.logical_model_id, "org/model")
         self.assertEqual(record.association_kind, "runtime_reported_hf_download")
         self.assertEqual(record.identity_confidence, llmrig.Confidence.HIGH)
@@ -201,7 +201,7 @@ class OmlxVerifyTests(unittest.TestCase):
         configuration = llmrig.RaceConfiguration(
             "org/model",
             "omlx",
-            "org--model",
+            "hf://org/model/mlx",
             "MLX",
             None,
             "omlx 1.2.3",
@@ -253,7 +253,7 @@ class OmlxVerifyTests(unittest.TestCase):
 
     def test_execution_adapter_rejects_response_identity_change(self):
         configuration = llmrig.RaceConfiguration(
-            "org/model", "omlx", "org--model", "MLX", None, None, True
+            "org/model", "omlx", "hf://org/model/mlx", "MLX", None, None, True
         )
         target = llmrig.ExecutionTarget(configuration, "org--model")
         workload = llmrig.RaceWorkload(
@@ -355,6 +355,7 @@ class OmlxVerifyTests(unittest.TestCase):
                 )
 
         def measured(model_id, prompt, max_tokens, **kwargs):
+            self.assertEqual(model_id, "org--model")
             return OmlxMeasurement(
                 model_id=model_id,
                 prompt_tokens=20,
@@ -400,10 +401,13 @@ class OmlxVerifyTests(unittest.TestCase):
             candidate
             for candidate in payload["candidates"]
             if candidate["runtime"] == "omlx"
-            and candidate["artifact_id"] == "org--model"
+            and candidate["artifact_id"] == "hf://org/model/mlx"
         ]
         self.assertEqual(len(omlx_candidates), 1)
         candidate = omlx_candidates[0]
+        self.assertEqual(
+            candidate["assessments"]["compatibility"]["state"], "compatible"
+        )
         self.assertEqual(
             candidate["assessments"]["local_availability"]["state"], "available"
         )
