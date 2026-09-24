@@ -7,7 +7,13 @@ import json
 import sys
 from typing import Optional, Sequence
 
-from .autopilot_apply import ApplyError, AutopilotReceipt, apply_autopilot_plan
+from .autopilot_apply import (
+    ApplyError,
+    AutopilotReceipt,
+    apply_autopilot_plan,
+    load_receipt,
+)
+from .autopilot_evidence import record_receipt_evidence
 from .autopilot_plan import AutopilotExecutionPlan, build_autopilot_plan
 from .hf_bridge import hf_metadata_for_legacy
 from .omlx_acquisition_provenance import omlx_acquisition_for_legacy
@@ -154,6 +160,16 @@ def _run_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _verify_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="llmrig verify",
+        description="Re-observe current evidence and re-verify a prior Autopilot receipt.",
+    )
+    parser.add_argument("receipt", nargs="?", default="latest")
+    parser.add_argument("--json", action="store_true")
+    return parser
+
+
 def _build_plan(model: str, context: Optional[int], legacy: object) -> AutopilotExecutionPlan:
     if context is not None and context <= 0:
         raise ValueError("--context must be a positive integer")
@@ -174,7 +190,10 @@ def _print_plan(plan: AutopilotExecutionPlan) -> None:
     print("\nLLMRig Autopilot Plan")
     print("=====================")
     print(f"Plan:    {plan.plan_id}")
-    print(f"Machine: {machine.get('cpu') or 'Unknown CPU'} · {ram if ram else 'RAM unknown'}" + (" GiB" if ram else ""))
+    print(
+        f"Machine: {machine.get('cpu') or 'Unknown CPU'} · "
+        f"{ram if ram else 'RAM unknown'}" + (" GiB" if ram else "")
+    )
     print(f"Model:   {plan.logical_model_id or plan.model}")
     if plan.candidates:
         print("\nRuntime       Format          Quant         Local         Executable")
@@ -188,9 +207,16 @@ def _print_plan(plan: AutopilotExecutionPlan) -> None:
                 item.execution,
             )
             widths = (12, 14, 12, 12, 12)
-            print("  ".join(_clip(value, width).ljust(width) for value, width in zip(values, widths)))
+            print(
+                "  ".join(
+                    _clip(value, width).ljust(width)
+                    for value, width in zip(values, widths)
+                )
+            )
     if plan.selected_candidate_id:
-        selected = next(item for item in plan.candidates if item.candidate_id == plan.selected_candidate_id)
+        selected = next(
+            item for item in plan.candidates if item.candidate_id == plan.selected_candidate_id
+        )
         label = "Setup path" if plan.recommendation_status == "setup_selected" else "Selected"
         print(f"\n{label}: {selected.runtime} · {selected.artifact_format}")
         print(f"Reason: {plan.recommendation_reason}")
@@ -273,7 +299,12 @@ def _approval(plan: AutopilotExecutionPlan, args: argparse.Namespace) -> bool:
         return False
 
 
-def _apply(plan: AutopilotExecutionPlan, args: argparse.Namespace, legacy: object, show_plan: bool) -> int:
+def _apply(
+    plan: AutopilotExecutionPlan,
+    args: argparse.Namespace,
+    legacy: object,
+    show_plan: bool,
+) -> int:
     if show_plan and not args.json:
         _print_plan(plan)
     if plan.blocked:
@@ -284,7 +315,10 @@ def _apply(plan: AutopilotExecutionPlan, args: argparse.Namespace, legacy: objec
         return 2
     approved = _approval(plan, args)
     if plan.has_mutations and not approved:
-        print("llmrig: mutating actions require interactive approval or --yes", file=sys.stderr)
+        print(
+            "llmrig: mutating actions require interactive approval or --yes",
+            file=sys.stderr,
+        )
         return 2
     try:
         receipt = apply_autopilot_plan(
@@ -296,6 +330,11 @@ def _apply(plan: AutopilotExecutionPlan, args: argparse.Namespace, legacy: objec
     except (ApplyError, PermissionError) as exc:
         print(f"llmrig: {exc}", file=sys.stderr)
         return 2
+    if receipt.verification is not None:
+        try:
+            record_receipt_evidence(plan, receipt)
+        except OSError as exc:
+            print(f"llmrig: warning: RigGraph evidence could not be persisted: {exc}", file=sys.stderr)
     print(json.dumps(receipt.to_dict(), indent=2)) if args.json else _print_receipt(receipt)
     return 0 if receipt.status == "completed" else 1
 
@@ -313,7 +352,10 @@ def command_apply(args: argparse.Namespace, legacy: object) -> int:
         print(f"llmrig apply: {exc}", file=sys.stderr)
         return 1
     if args.plan_id != plan.plan_id:
-        print("llmrig apply: plan drift detected; current evidence no longer matches the approved plan ID", file=sys.stderr)
+        print(
+            "llmrig apply: plan drift detected; current evidence no longer matches the approved plan ID",
+            file=sys.stderr,
+        )
         if not args.json:
             print(f"Current plan: {plan.plan_id}", file=sys.stderr)
         return 2
@@ -335,6 +377,58 @@ def command_run(args: argparse.Namespace, legacy: object) -> int:
     return _apply(plan, args, legacy, True)
 
 
+def command_verify(args: argparse.Namespace, legacy: object) -> int:
+    try:
+        previous = load_receipt(args.receipt)
+    except ApplyError as exc:
+        print(f"llmrig verify: {exc}", file=sys.stderr)
+        return 2
+    model = previous.get("model")
+    candidate_payload = previous.get("candidate")
+    if not isinstance(model, str) or not isinstance(candidate_payload, dict):
+        print("llmrig verify: receipt is missing model/candidate identity", file=sys.stderr)
+        return 2
+    try:
+        plan = _build_plan(model, None, legacy)
+    except (ValueError, legacy.SolveInputError) as exc:
+        print(f"llmrig verify: {exc}", file=sys.stderr)
+        return 2
+    except legacy.SolveEngineError as exc:
+        print(f"llmrig verify: {exc}", file=sys.stderr)
+        return 1
+
+    expected_runtime = candidate_payload.get("runtime")
+    expected_artifact = candidate_payload.get("artifact_id")
+    selected = next(
+        (
+            item
+            for item in plan.candidates
+            if item.runtime == expected_runtime and item.artifact_id == expected_artifact
+        ),
+        None,
+    )
+    if selected is None:
+        print(
+            "llmrig verify: current evidence no longer exposes the receipt's exact runtime/artifact candidate",
+            file=sys.stderr,
+        )
+        return 2
+    if plan.selected_candidate_id != selected.candidate_id:
+        print(
+            "llmrig verify: current evidence no longer uniquely selects the receipt's configuration",
+            file=sys.stderr,
+        )
+        return 2
+    if plan.has_mutations:
+        print(
+            "llmrig verify: current state requires mutation; run plan/apply instead of verify",
+            file=sys.stderr,
+        )
+        return 2
+    args.yes = True
+    return _apply(plan, args, legacy, False)
+
+
 def _print_augmented_help() -> int:
     import llmrig as legacy
 
@@ -344,6 +438,7 @@ def _print_augmented_help() -> int:
     print("\nv0.9 Autopilot:")
     print("  plan MODEL          Build a deterministic, read-only execution plan.")
     print("  apply MODEL         Apply an exact matching plan after explicit approval.")
+    print("  verify [RECEIPT]    Re-observe and re-verify current state from a receipt.")
     print("  run MODEL           Plan, approve, apply, and verify in one workflow.")
     return 0
 
@@ -358,12 +453,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     import llmrig as legacy
 
     with hf_metadata_for_legacy(legacy):
-        if values and values[0] in {"plan", "apply", "run", "solve"}:
-            with adapter_capabilities_for_legacy(legacy), omlx_verify_for_legacy(legacy), omlx_acquisition_for_legacy(legacy):
+        if values and values[0] in {"plan", "apply", "verify", "run", "solve"}:
+            with adapter_capabilities_for_legacy(legacy), omlx_verify_for_legacy(
+                legacy
+            ), omlx_acquisition_for_legacy(legacy):
                 if values[0] == "plan":
                     return command_plan(_plan_parser().parse_args(values[1:]), legacy)
                 if values[0] == "apply":
                     return command_apply(_apply_parser().parse_args(values[1:]), legacy)
+                if values[0] == "verify":
+                    return command_verify(_verify_parser().parse_args(values[1:]), legacy)
                 if values[0] == "run":
                     return command_run(_run_parser().parse_args(values[1:]), legacy)
                 return legacy.main(values)
