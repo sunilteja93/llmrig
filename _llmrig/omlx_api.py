@@ -44,6 +44,26 @@ class OmlxModelInfo:
 
 
 @dataclass(frozen=True)
+class OmlxModelStatus:
+    """Path-free provenance fields exposed by oMLX's detailed model status."""
+
+    model_id: str
+    source_repo_id: Optional[str]
+    source_type: Optional[str]
+    loaded: Optional[bool]
+    max_model_len: Optional[int]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "model_id": self.model_id,
+            "source_repo_id": self.source_repo_id,
+            "source_type": self.source_type,
+            "loaded": self.loaded,
+            "max_model_len": self.max_model_len,
+        }
+
+
+@dataclass(frozen=True)
 class OmlxMeasurement:
     """One non-streaming server-reported oMLX completion measurement."""
 
@@ -141,6 +161,17 @@ def _positive_int(value: Any) -> Optional[int]:
     return parsed if parsed is not None and parsed > 0 else None
 
 
+def _optional_text(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None
+
+
+def _optional_bool(value: Any) -> Optional[bool]:
+    return value if isinstance(value, bool) else None
+
+
 def _headers() -> Dict[str, str]:
     headers = {
         "Accept": "application/json",
@@ -206,19 +237,54 @@ def list_models(
     for item in data:
         if not isinstance(item, dict):
             continue
-        model_id = item.get("id")
-        if not isinstance(model_id, str) or not model_id.strip():
-            continue
-        model_id = model_id.strip()
-        if model_id in seen:
+        model_id = _optional_text(item.get("id"))
+        if model_id is None or model_id in seen:
             continue
         seen.add(model_id)
-        owned_by = item.get("owned_by")
         models.append(
             OmlxModelInfo(
                 model_id=model_id,
                 max_model_len=_positive_int(item.get("max_model_len")),
-                owned_by=owned_by if isinstance(owned_by, str) else None,
+                owned_by=_optional_text(item.get("owned_by")),
+            )
+        )
+    return tuple(sorted(models, key=lambda item: item.model_id))
+
+
+def list_model_statuses(
+    base_url: str = DEFAULT_OMLX_BASE_URL,
+    timeout: float = 3.0,
+) -> Tuple[OmlxModelStatus, ...]:
+    """Read path-free provenance from ``GET /v1/models/status``.
+
+    oMLX's detailed status can contain private fields such as ``model_path``.
+    LLMRig intentionally discards every field except the public model ID,
+    Hugging Face ``source_repo_id``, source type, loaded state, and context.
+    """
+    payload = _request_json(base_url, "/v1/models/status", timeout=timeout)
+    data = payload.get("models")
+    if not isinstance(data, list):
+        raise OmlxApiError("oMLX /v1/models/status response is missing a model list")
+
+    models = []
+    seen = set()
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        model_id = _optional_text(item.get("id"))
+        if model_id is None or model_id in seen:
+            continue
+        seen.add(model_id)
+        max_model_len = _positive_int(item.get("max_context_window"))
+        if max_model_len is None:
+            max_model_len = _positive_int(item.get("model_context_length"))
+        models.append(
+            OmlxModelStatus(
+                model_id=model_id,
+                source_repo_id=_optional_text(item.get("source_repo_id")),
+                source_type=_optional_text(item.get("source_type")),
+                loaded=_optional_bool(item.get("loaded")),
+                max_model_len=max_model_len,
             )
         )
     return tuple(sorted(models, key=lambda item: item.model_id))
@@ -259,11 +325,8 @@ def measure_completion(
     if not isinstance(usage, dict):
         raise OmlxApiError("oMLX completion response is missing usage metrics")
 
-    response_model = payload.get("model")
-    if isinstance(response_model, str) and response_model.strip():
-        observed_model_id = response_model.strip()
-    else:
-        observed_model_id = model_id.strip()
+    response_model = _optional_text(payload.get("model"))
+    observed_model_id = response_model or model_id.strip()
 
     return OmlxMeasurement(
         model_id=observed_model_id,
