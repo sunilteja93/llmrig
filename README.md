@@ -93,11 +93,7 @@ llmrig apply MODEL --plan-id plan-... --yes
 
 Exact Hugging Face acquisition is pinned to the repository revision returned by the Hub. Generic discovery metadata never becomes installation trust.
 
-Approved Hugging Face acquisition uses the optional `huggingface_hub` package. For a pipx installation:
-
-```bash
-pipx inject llmrig huggingface_hub
-```
+Approved Hugging Face acquisition uses the bundled `huggingface_hub` dependency and pins downloads to the exact repository revision resolved by the Hub.
 
 ### 3. Verify — measure current reality
 
@@ -310,7 +306,7 @@ python -m venv .venv
 python -m pip install llmrig
 ```
 
-LLMRig supports Python 3.9+ on macOS, Linux, and Windows and has no mandatory third-party Python runtime dependency.
+LLMRig supports Python 3.9+ on macOS, Linux, and Windows. Hugging Face Hub support is included for exact, revision-pinned artifact acquisition.
 
 ## Architecture
 
