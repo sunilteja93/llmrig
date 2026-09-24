@@ -25,6 +25,10 @@ from .omlx_api import (
 from .runtime_adapters import OmlxRuntimeAdapter
 
 
+def _canonical_mlx_artifact_id(requested: str) -> str:
+    return f"hf://{requested}/mlx"
+
+
 def _inventory_target_for_status(
     legacy: Any,
     requested: str,
@@ -57,7 +61,7 @@ def _inventory_target_for_status(
 
     record = InventoryRecord(
         runtime="omlx",
-        public_artifact_id=selected.model_id,
+        public_artifact_id=_canonical_mlx_artifact_id(requested),
         artifact_fingerprint=None,
         logical_model_id=requested,
         artifact_format="MLX",
@@ -69,7 +73,8 @@ def _inventory_target_for_status(
         evidence=(observed, provenance),
         unknowns=tuple(dict.fromkeys(unknowns)),
     )
-    # The model ID is an API routing identifier, not a filesystem path.
+    # The API model ID stays private as the execution locator; public solve output
+    # uses the canonical resolved MLX artifact identity instead.
     return InventoryTarget(record, selected.model_id)
 
 
@@ -99,9 +104,7 @@ def inventory_targets_from_statuses(
         and item.model_id.strip()
     )
     if direct_matches:
-        unique_ids = tuple(
-            sorted({item.model_id.strip() for item in direct_matches})
-        )
+        unique_ids = tuple(sorted({item.model_id.strip() for item in direct_matches}))
         if len(unique_ids) != 1:
             return ()
         selected = next(
@@ -202,6 +205,105 @@ def observe_omlx_inventory(
         requested_logical_model_id,
         statuses,
         download_records,
+    )
+
+
+def _merge_omlx_inventory_candidate(legacy: Any, result: Any) -> Any:
+    """Join canonical compatibility facts with provenance-backed local oMLX facts.
+
+    The generic solve engine intentionally treats every native inventory record as a
+    separate candidate because user-supplied artifacts are not automatically the same
+    thing as a resolved Hub artifact. oMLX is different here: this bridge only emits
+    a native record after runtime-reported provenance has defensibly associated the
+    local model with the exact requested Hugging Face repository. In that narrow
+    case, merge the duplicate native/canonical candidates instead of weakening the
+    generic rule.
+    """
+    logical_id = str(getattr(result, "logical_model_id", "") or "").strip()
+    if not logical_id:
+        return result
+    candidate_id = f"omlx:{_canonical_mlx_artifact_id(logical_id)}"
+    matches = tuple(
+        candidate
+        for candidate in result.candidates
+        if candidate.candidate_id == candidate_id
+    )
+    if len(matches) != 2:
+        return result
+
+    canonical = next(
+        (
+            candidate
+            for candidate in matches
+            if getattr(candidate.assessments.compatibility.state, "value", None)
+            == "compatible"
+        ),
+        None,
+    )
+    local = next(
+        (
+            candidate
+            for candidate in matches
+            if getattr(candidate.assessments.local_availability.state, "value", None)
+            == "available"
+            and candidate.local_identity_evidence
+        ),
+        None,
+    )
+    if canonical is None or local is None or canonical is local:
+        return result
+    if (
+        getattr(canonical.assessments.runtime_availability.state, "value", None)
+        != "available"
+    ):
+        return result
+
+    execution_evidence = (
+        legacy.RecommendationEvidence(
+            "deterministic-execution-state",
+            "LLMRig oMLX provenance join",
+            "execution is enabled because the resolved MLX artifact is compatible, the oMLX runtime is available, and runtime-reported provenance establishes the exact local model association",
+        ),
+    )
+    execution = replace(
+        canonical.assessments.execution,
+        state=type(canonical.assessments.execution.state).EXECUTABLE,
+        confidence=legacy.Confidence.HIGH,
+        evidence=execution_evidence,
+        blockers=(),
+        unknowns=(),
+    )
+    assessments = replace(
+        canonical.configuration.assessments,
+        local_availability=local.assessments.local_availability,
+        execution=execution,
+    )
+    configuration = replace(canonical.configuration, assessments=assessments)
+    recipe = type(canonical.recipe)(
+        "already_runnable",
+        (
+            "The runtime and exact local artifact are available; use --verify to measure this configuration.",
+        ),
+        (),
+        True,
+    )
+    merged = replace(
+        canonical,
+        configuration=configuration,
+        local_identity_attested=local.local_identity_attested,
+        local_identity_confidence=local.local_identity_confidence,
+        local_identity_evidence=local.local_identity_evidence,
+        recipe=recipe,
+    )
+    remaining = [
+        candidate
+        for candidate in result.candidates
+        if candidate.candidate_id != candidate_id
+    ]
+    remaining.append(merged)
+    return replace(
+        result,
+        candidates=tuple(sorted(remaining, key=lambda candidate: candidate.candidate_id)),
     )
 
 
@@ -394,9 +496,12 @@ def verify_solve_result_with_omlx(
 @contextmanager
 def omlx_verify_for_legacy(legacy: Any) -> Iterator[None]:
     """Temporarily add oMLX inventory and explicit verification to legacy solve."""
+    from . import solve as solve_module
+
     original_inventory = legacy._autopilot_explicit_native_inventory
     original_verify = legacy._verify_solve_result
     original_configurations = legacy._solve_verification_configurations
+    original_construct = solve_module.solve
 
     def inventory(logical_model_id: str, values: Sequence[str]) -> Tuple[Any, ...]:
         native = tuple(original_inventory(logical_model_id, values))
@@ -410,6 +515,9 @@ def omlx_verify_for_legacy(legacy: Any) -> Iterator[None]:
                 ),
             )
         )
+
+    def construct(inputs: Any) -> Any:
+        return _merge_omlx_inventory_candidate(legacy, original_construct(inputs))
 
     def verify(
         result: Any,
@@ -430,8 +538,10 @@ def omlx_verify_for_legacy(legacy: Any) -> Iterator[None]:
 
     legacy._autopilot_explicit_native_inventory = inventory
     legacy._verify_solve_result = verify
+    solve_module.solve = construct
     try:
         yield
     finally:
+        solve_module.solve = original_construct
         legacy._autopilot_explicit_native_inventory = original_inventory
         legacy._verify_solve_result = original_verify
