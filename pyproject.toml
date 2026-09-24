@@ -23,6 +23,7 @@ keywords = [
   "hardware-compatibility",
   "benchmarking",
   "ollama",
+  "omlx",
   "llama-cpp",
   "mlx-lm",
 ]
@@ -53,7 +54,7 @@ Security = "https://github.com/sunilteja93/llmrig/blob/main/SECURITY.md"
 Documentation = "https://github.com/sunilteja93/llmrig#readme"
 
 [project.scripts]
-llmrig = "llmrig:main"
+llmrig = "_llmrig.cli:main"
 
 [tool.setuptools]
 py-modules = ["llmrig"]
