@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "llmrig"
 dynamic = ["version"]
-description = "Open compatibility and performance intelligence for local AI models and runtimes."
+description = "Evidence-driven runtime, compatibility, and performance intelligence for local AI."
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
