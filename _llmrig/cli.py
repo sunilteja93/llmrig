@@ -433,7 +433,7 @@ def _print_augmented_help() -> int:
     import llmrig as legacy
 
     legacy.build_parser().print_help()
-    print("\nv0.8 runtime intelligence:")
+    print("\nRuntime intelligence:")
     print("  runtimes            Inspect oMLX, Ollama, MLX-LM, and llama.cpp readiness.")
     print("\nv0.9 Autopilot:")
     print("  plan MODEL          Build a deterministic, read-only execution plan.")

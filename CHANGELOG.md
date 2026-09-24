@@ -2,6 +2,50 @@
 
 All notable changes to LLMRig will be documented here.
 
+## 0.9.0 - 2026-09-24
+
+### Autopilot
+
+- Add deterministic `llmrig plan MODEL` with stable plan IDs, blockers,
+  unknowns, candidate execution paths, and planned verification.
+- Add explicit `llmrig apply MODEL --plan-id ...` with interactive or
+  explicit non-interactive approval and fail-closed plan-drift detection.
+- Add `llmrig run MODEL` as the convenience plan → approve → apply → verify
+  workflow without bypassing mutation approval.
+- Add standalone `llmrig verify [RECEIPT]` that re-observes current evidence,
+  refuses mutation, and performs fresh measured verification.
+
+### Acquisition and runtime actions
+
+- Add opt-in exact Hugging Face artifact acquisition pinned to the resolved
+  repository revision.
+- Keep private download/execution locators out of public plans and receipts.
+- Add adapter-owned runtime action capabilities for oMLX, Ollama, MLX-LM,
+  and llama.cpp where safely supported.
+- Leave unsupported mutation explicit instead of silently emulating it.
+
+### Receipts, RigGraph, and calibration
+
+- Emit privacy-safe deterministic action receipts for applied workflows.
+- Persist successful measured verification into a local RigGraph evidence
+  store across machine, model, artifact, quantization, runtime, context,
+  and measurement dimensions.
+- Keep prediction and measurement as separate facts.
+- Compute calibration deltas only when predicted and measured dimensions
+  are genuinely comparable; missing metrics remain unknown.
+
+### Safety and evidence
+
+- Preserve read-only planning as the default.
+- Preserve the evidence boundaries: unknown is not false; compatible is not
+  local; local is not executable; executable is not measurable; measurable
+  is not measured; measured is not recommended; measured performance is not
+  model quality.
+- Require explicit user intent for every mutating workflow.
+- Keep private filesystem paths and secrets out of public plans, receipts,
+  and RigGraph evidence.
+
+
 ## 0.8.1 - 2026-09-24
 
 ### Fixed / Documentation
