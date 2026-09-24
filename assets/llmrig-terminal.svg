@@ -1,75 +1,138 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="450" viewBox="0 0 1200 450" role="img" aria-labelledby="title desc">
-<title id="title">LLMRig v0.9 Autopilot for local AI</title>
-<desc id="desc">Terminal-style overview of LLMRig v0.9 planning an evidenced local AI setup, requiring explicit approval, applying supported actions, verifying current reality, and recording privacy-safe RigGraph evidence.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">LLMRig v0.9 — Autopilot for local AI</title>
+  <desc id="desc">Minimal monochrome product hero showing LLMRig's verified local AI workflow.</desc>
 
-<defs>
-  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-    <stop offset="0" stop-color="#010409"/>
-    <stop offset="1" stop-color="#0d1117"/>
-  </linearGradient>
-  <linearGradient id="rail" x1="0" y1="0" x2="1" y2="0">
-    <stop offset="0" stop-color="#58a6ff"/>
-    <stop offset=".5" stop-color="#7ee787"/>
-    <stop offset="1" stop-color="#a371f7"/>
-  </linearGradient>
-  <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse">
-    <path d="M 28 0 L 0 0 0 28" fill="none" stroke="#21262d" stroke-width="1" opacity=".22"/>
-  </pattern>
-</defs>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1600" y2="900" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#050505"/>
+      <stop offset="1" stop-color="#0B0B0B"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#141414"/>
+      <stop offset="1" stop-color="#0D0D0D"/>
+    </linearGradient>
+    <style>
+      .sans { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Helvetica, Arial, sans-serif; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+      .white { fill: #F5F5F5; }
+      .soft { fill: #CFCFCF; }
+      .muted { fill: #858585; }
+      .hair { stroke: #2A2A2A; stroke-width: 1; }
+    </style>
+  </defs>
 
-<rect width="1200" height="450" rx="22" fill="url(#bg)"/>
-<rect x="18" y="18" width="1164" height="414" rx="18" fill="url(#grid)" stroke="#30363d" stroke-width="2"/>
+  <!-- Canvas -->
+  <rect width="1600" height="900" rx="32" fill="url(#bg)"/>
 
-<circle cx="48" cy="49" r="7" fill="#ff7b72"/>
-<circle cx="72" cy="49" r="7" fill="#e3b341"/>
-<circle cx="96" cy="49" r="7" fill="#3fb950"/>
-
-<text x="128" y="56" fill="#8b949e" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="18">local@rig:~$ llmrig run MODEL</text>
-
-<text x="58" y="116" fill="#58a6ff" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="29" font-weight="700">AUTOPILOT FOR LOCAL AI</text>
-<text x="58" y="148" fill="#c9d1d9" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="16">plan from evidence · change nothing without permission · verify reality</text>
-<text x="58" y="176" fill="#a371f7" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" font-weight="700" letter-spacing=".8">v0.9 / PLAN → APPLY → VERIFY</text>
-
-<line x1="94" y1="228" x2="1090" y2="228" stroke="url(#rail)" stroke-width="3" opacity=".75"/>
-
-<g font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">
-  <g>
-    <rect x="58" y="197" width="182" height="62" rx="10" fill="#0d1117" stroke="#58a6ff" stroke-width="2"/>
-    <text x="78" y="220" fill="#8b949e" font-size="11">01 / DETECT</text>
-    <text x="78" y="243" fill="#c9d1d9" font-size="14">machine · runtimes</text>
-  </g>
-  <g>
-    <rect x="282" y="197" width="182" height="62" rx="10" fill="#0d1117" stroke="#58a6ff" stroke-width="2"/>
-    <text x="302" y="220" fill="#8b949e" font-size="11">02 / PLAN</text>
-    <text x="302" y="243" fill="#c9d1d9" font-size="14">artifact · actions</text>
-  </g>
-  <g>
-    <rect x="506" y="197" width="182" height="62" rx="10" fill="#0d1117" stroke="#7ee787" stroke-width="2"/>
-    <text x="526" y="220" fill="#8b949e" font-size="11">03 / APPROVE</text>
-    <text x="526" y="243" fill="#c9d1d9" font-size="14">explicit intent</text>
-  </g>
-  <g>
-    <rect x="730" y="197" width="182" height="62" rx="10" fill="#0d1117" stroke="#7ee787" stroke-width="2"/>
-    <text x="750" y="220" fill="#8b949e" font-size="11">04 / APPLY</text>
-    <text x="750" y="243" fill="#c9d1d9" font-size="14">acquire · launch</text>
-  </g>
-  <g>
-    <rect x="954" y="197" width="182" height="62" rx="10" fill="#0d1117" stroke="#a371f7" stroke-width="2"/>
-    <text x="974" y="220" fill="#8b949e" font-size="11">05 / VERIFY</text>
-    <text x="974" y="243" fill="#c9d1d9" font-size="14">measure · receipt</text>
+  <!-- Header -->
+  <g transform="translate(92 82)">
+    <text class="sans muted" x="0" y="0" font-size="17" font-weight="650" letter-spacing="6">LLMRIG</text>
+    <text class="sans white" x="0" y="122" font-size="132" font-weight="760" letter-spacing="-6">v0.9</text>
+    <text class="sans white" x="0" y="175" font-size="31" font-weight="520" letter-spacing="7">AUTOPILOT FOR LOCAL AI</text>
+    <text class="sans soft" x="0" y="221" font-size="20" font-weight="430">Plan. Approve. Apply. Verify. Remember.</text>
   </g>
 
-  <text x="58" y="306" fill="#8b949e" font-size="12">runtimes</text>
-  <text x="132" y="306" fill="#c9d1d9" font-size="13">oMLX · Ollama · MLX-LM · llama.cpp</text>
+  <!-- Meta -->
+  <g transform="translate(1040 92)">
+    <text class="sans soft" x="0" y="0" font-size="15" font-weight="560">PYTHON 3.9+</text>
+    <line x1="126" y1="-14" x2="126" y2="5" class="hair"/>
+    <text class="sans soft" x="150" y="0" font-size="15" font-weight="560">READ-ONLY PLAN</text>
+    <line x1="303" y1="-14" x2="303" y2="5" class="hair"/>
+    <text class="sans soft" x="327" y="0" font-size="15" font-weight="560">PRIVACY FIRST</text>
+  </g>
 
-  <text x="58" y="338" fill="#8b949e" font-size="12">evidence</text>
-  <text x="132" y="338" fill="#7ee787" font-size="13">unknown stays unknown · prediction != measurement · private locators stay private</text>
+  <!-- Main content -->
+  <g transform="translate(92 350)">
+    <!-- Statement -->
+    <g>
+      <text class="sans white" x="0" y="0" font-size="52" font-weight="710" letter-spacing="-1.8">Local AI.</text>
+      <text class="sans white" x="0" y="61" font-size="52" font-weight="710" letter-spacing="-1.8">Without guesswork.</text>
 
-  <text x="58" y="370" fill="#8b949e" font-size="12">memory</text>
-  <text x="132" y="370" fill="#a371f7" font-size="13">privacy-safe receipts · local RigGraph · comparable calibration only</text>
+      <text class="sans soft" x="0" y="125" font-size="18">Deterministic planning. Explicit approval.</text>
+      <text class="sans soft" x="0" y="156" font-size="18">Exact provenance. Measured verification.</text>
+      <text class="sans soft" x="0" y="187" font-size="18">Privacy-safe receipts. RigGraph evidence.</text>
 
-  <line x1="58" y1="394" x2="1136" y2="394" stroke="#21262d"/>
-  <text x="58" y="420" fill="#8b949e" font-size="12">Python 3.9+ · macOS / Windows / Linux · read-only planning by default</text>
-  <text x="1136" y="420" text-anchor="end" fill="#58a6ff" font-size="12">LLMRig / OPEN SOURCE</text>
-</g>
+      <line x1="0" y1="232" x2="500" y2="232" class="hair"/>
+
+      <text class="sans muted" x="0" y="274" font-size="14" font-weight="650" letter-spacing="4">WHAT LLMRIG DOES</text>
+
+      <text class="sans white" x="0" y="322" font-size="19" font-weight="570">01</text>
+      <text class="sans soft" x="54" y="322" font-size="19">Plans a safe local path</text>
+
+      <text class="sans white" x="0" y="361" font-size="19" font-weight="570">02</text>
+      <text class="sans soft" x="54" y="361" font-size="19">Changes nothing without approval</text>
+
+      <text class="sans white" x="0" y="400" font-size="19" font-weight="570">03</text>
+      <text class="sans soft" x="54" y="400" font-size="19">Verifies the result with real inference</text>
+    </g>
+
+    <!-- Terminal -->
+    <g transform="translate(610 -8)">
+      <rect width="806" height="452" rx="24" fill="url(#panel)" stroke="#252525"/>
+      <rect width="806" height="54" rx="24" fill="#101010"/>
+      <rect y="29" width="806" height="25" fill="#101010"/>
+
+      <circle cx="28" cy="27" r="5.5" fill="#B8B8B8"/>
+      <circle cx="49" cy="27" r="5.5" fill="#777777"/>
+      <circle cx="70" cy="27" r="5.5" fill="#464646"/>
+      <text class="mono muted" x="765" y="33" font-size="13" text-anchor="end">llmrig · v0.9</text>
+
+      <g transform="translate(30 92)">
+        <text class="mono white" x="0" y="0" font-size="16">$ llmrig run mlx-community/Qwen3-0.6B-4bit</text>
+
+        <text class="mono soft" x="0" y="44" font-size="15">setup</text>
+        <text class="mono white" x="100" y="44" font-size="15">mlx-lm · MLX</text>
+
+        <text class="mono soft" x="0" y="75" font-size="15">policy</text>
+        <text class="mono white" x="100" y="75" font-size="15">unique minimal-change path</text>
+
+        <line x1="0" y1="108" x2="746" y2="108" class="hair"/>
+
+        <text class="mono soft" x="0" y="151" font-size="15">acquire_artifact</text>
+        <text class="mono white" x="205" y="151" font-size="15">completed</text>
+
+        <text class="mono soft" x="0" y="182" font-size="15">load_model</text>
+        <text class="mono white" x="205" y="182" font-size="15">completed</text>
+
+        <text class="mono soft" x="0" y="213" font-size="15">verify</text>
+        <text class="mono white" x="205" y="213" font-size="15">completed</text>
+
+        <line x1="0" y1="246" x2="746" y2="246" class="hair"/>
+
+        <text class="sans muted" x="0" y="282" font-size="12" font-weight="650" letter-spacing="2">MEASURED VERIFICATION</text>
+
+        <text class="mono white" x="0" y="324" font-size="22">560.85 tok/s</text>
+        <text class="sans muted" x="0" y="348" font-size="11" font-weight="650" letter-spacing="1.5">GENERATION</text>
+
+        <text class="mono white" x="250" y="324" font-size="22">1629.77 tok/s</text>
+        <text class="sans muted" x="250" y="348" font-size="11" font-weight="650" letter-spacing="1.5">PROMPT</text>
+
+        <text class="mono white" x="535" y="324" font-size="22">0.2639 s</text>
+        <text class="sans muted" x="535" y="348" font-size="11" font-weight="650" letter-spacing="1.5">LATENCY</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- Bottom workflow -->
+  <g transform="translate(92 820)">
+    <line x1="0" y1="0" x2="1416" y2="0" class="hair"/>
+
+    <text class="sans muted" x="0" y="42" font-size="13" font-weight="650" letter-spacing="3">AUTOPILOT</text>
+
+    <text class="sans white" x="185" y="42" font-size="16" font-weight="560">PLAN</text>
+    <line x1="247" y1="37" x2="272" y2="37" class="hair"/>
+
+    <text class="sans white" x="290" y="42" font-size="16" font-weight="560">APPROVE</text>
+    <line x1="382" y1="37" x2="407" y2="37" class="hair"/>
+
+    <text class="sans white" x="425" y="42" font-size="16" font-weight="560">APPLY</text>
+    <line x1="494" y1="37" x2="519" y2="37" class="hair"/>
+
+    <text class="sans white" x="537" y="42" font-size="16" font-weight="560">VERIFY</text>
+    <line x1="609" y1="37" x2="634" y2="37" class="hair"/>
+
+    <text class="sans white" x="652" y="42" font-size="16" font-weight="560">REMEMBER</text>
+
+    <text class="sans muted" x="1416" y="42" font-size="13" text-anchor="end">oMLX · Ollama · MLX-LM · llama.cpp</text>
+  </g>
 </svg>
