@@ -3,7 +3,11 @@ from __future__ import annotations
 import unittest
 
 from _llmrig.autopilot_actions import ActionKind, AutopilotPlan, PlannedAction
-from _llmrig.hf_artifacts import classify_hub_siblings, summarize_hub_artifacts
+from _llmrig.hf_artifacts import (
+    classify_hub_repository,
+    classify_hub_siblings,
+    summarize_hub_artifacts,
+)
 from _llmrig.riggraph import RigEdge, RigGraph, RigNode
 
 
@@ -37,8 +41,90 @@ class HuggingFaceArtifactTests(unittest.TestCase):
             tags=("mlx",),
         )
         summary = summarize_hub_artifacts(artifacts)
+        self.assertEqual(artifacts[0].format, "safetensors")
         self.assertEqual(summary["runtime_hints"], ["mlx-lm", "omlx"])
         self.assertIn("not proof", summary["warning"])
+
+    def test_explicit_mlx_library_metadata_can_classify_mlx_packaging(self) -> None:
+        result = classify_hub_repository(
+            "owner/model",
+            {
+                "id": "owner/model",
+                "library_name": "mlx",
+                "config": {"quantization": {"bits": 4}},
+                "siblings": [{"rfilename": "model.safetensors", "size": 100}],
+            },
+        )
+        self.assertEqual(len(result.artifacts), 1)
+        self.assertEqual(result.artifacts[0].format, "MLX")
+        self.assertEqual(result.artifacts[0].quantization, "4-bit")
+        self.assertEqual(result.artifacts[0].runtime_hints, ("mlx-lm", "omlx"))
+
+    def test_conflicting_context_metadata_fails_closed(self) -> None:
+        result = classify_hub_repository(
+            "owner/model",
+            {
+                "id": "owner/model",
+                "config": {
+                    "max_position_embeddings": 32768,
+                    "seq_length": 65536,
+                },
+                "siblings": [{"rfilename": "model.safetensors", "size": 100}],
+            },
+        )
+        self.assertEqual(result.context_status, "ambiguous")
+        self.assertIsNone(result.context_max)
+        self.assertIsNone(result.artifacts[0].context_max)
+        self.assertIn("context limit metadata is conflicting", result.artifacts[0].unknowns)
+
+    def test_conflicting_explicit_quantization_metadata_fails_closed(self) -> None:
+        result = classify_hub_repository(
+            "owner/model",
+            {
+                "id": "owner/model",
+                "library_name": "mlx",
+                "config": {
+                    "quantization_config": {"bits": 4},
+                    "quantization": {"bits": 8},
+                },
+                "siblings": [{"rfilename": "model.safetensors", "size": 100}],
+            },
+        )
+        self.assertEqual(result.quantization_status, "ambiguous")
+        self.assertIsNone(result.explicit_quantization)
+        self.assertIsNone(result.artifacts[0].quantization)
+        self.assertIn("quantization metadata is conflicting", result.artifacts[0].unknowns)
+
+    def test_ambiguous_base_model_keeps_repository_identity(self) -> None:
+        result = classify_hub_repository(
+            "converter/model",
+            {
+                "id": "converter/model",
+                "cardData": {"base_model": ["upstream/a", "upstream/b"]},
+                "siblings": [{"rfilename": "model-Q4_K_M.gguf", "size": 100}],
+            },
+        )
+        self.assertEqual(result.base_model_status, "ambiguous")
+        self.assertIsNone(result.base_model_id)
+        self.assertEqual(result.logical_model_id, "converter/model")
+        self.assertIn("base model association is ambiguous", result.unknowns)
+
+    def test_incomplete_safetensors_shards_do_not_invent_size(self) -> None:
+        result = classify_hub_repository(
+            "owner/model",
+            {
+                "id": "owner/model",
+                "siblings": [
+                    {"rfilename": "model-00001-of-00002.safetensors", "size": 100}
+                ],
+            },
+        )
+        self.assertEqual(len(result.artifacts), 1)
+        self.assertIsNone(result.artifacts[0].size_bytes)
+        self.assertIn(
+            "artifact size is unknown because weight-file grouping is ambiguous",
+            result.artifacts[0].unknowns,
+        )
 
 
 class RigGraphTests(unittest.TestCase):
