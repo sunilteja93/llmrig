@@ -1,10 +1,9 @@
 """Bridge v0.8 runtime probes into the established solve capability contract.
 
-This module keeps runtime observation in one adapter registry while preserving the
-legacy :class:`llmrig.RuntimeCapability` schema consumed by compatibility and solve.
-It never installs, starts, or downloads a runtime or model. Execution support flags
-only describe code paths that LLMRig can use when the user explicitly requests a
-measured verification.
+This module preserves the legacy :class:`llmrig.RuntimeCapability` schema consumed
+by compatibility and solve while treating adapter-produced probes as the single
+source of runtime readiness and LLMRig support facts. It never installs, starts,
+or downloads a runtime or model.
 """
 
 from __future__ import annotations
@@ -15,39 +14,6 @@ from typing import Any, Iterator, Optional, Sequence, Tuple
 from .runtime_adapters import RuntimeProbe, probe_runtimes
 
 
-_LLMRIG_EXECUTION_SUPPORTED = {
-    "ollama": True,
-    "llama.cpp": True,
-    "mlx-lm": True,
-    "omlx": True,
-}
-
-_LLMRIG_BENCHMARK_SUPPORTED = {
-    "ollama": True,
-    "llama.cpp": True,
-    "mlx-lm": True,
-    "omlx": True,
-}
-
-
-def _probe_available(probe: RuntimeProbe) -> bool:
-    """Translate observational probe state without overstating readiness."""
-    if not probe.installed or probe.blockers:
-        return False
-
-    if probe.runtime in {"omlx", "ollama"}:
-        # Service-backed runtimes are available only when their local endpoint
-        # actually responded. Installation alone is not enough.
-        return probe.service_available is True
-
-    if probe.runtime in {"mlx-lm", "llama.cpp"}:
-        # Preserve the established native-runtime health boundary: a detected
-        # command without version evidence is not treated as available yet.
-        return probe.cli_path is not None and probe.version is not None
-
-    return probe.locally_usable
-
-
 def capabilities_from_probes(
     legacy: Any,
     profile: Any,
@@ -56,8 +22,8 @@ def capabilities_from_probes(
     """Create established RuntimeCapability values from v0.8 adapter probes.
 
     ``profile`` remains part of the bridge signature because it is part of the
-    stable capability-provider contract. Platform/architecture facts are already
-    represented explicitly by each probe and are not re-inferred here.
+    stable capability-provider contract. Platform/architecture and readiness facts
+    are already represented explicitly by each probe and are not re-inferred here.
     """
     del profile
     observed = tuple(probe_runtimes() if probes is None else probes)
@@ -76,19 +42,15 @@ def capabilities_from_probes(
             legacy.RuntimeCapability(
                 runtime=probe.runtime,
                 installed=probe.installed,
-                available=_probe_available(probe),
+                available=probe.capability_available,
                 version=probe.version,
                 supported_artifact_formats=probe.supported_artifact_formats,
                 supported_platforms=probe.supported_platforms,
                 supported_architectures=probe.supported_architectures,
-                runtime_execution_capable=True,
-                llmrig_installation_supported=False,
-                llmrig_execution_supported=_LLMRIG_EXECUTION_SUPPORTED.get(
-                    probe.runtime, False
-                ),
-                llmrig_benchmark_supported=_LLMRIG_BENCHMARK_SUPPORTED.get(
-                    probe.runtime, False
-                ),
+                runtime_execution_capable=probe.runtime_execution_capable,
+                llmrig_installation_supported=probe.llmrig_installation_supported,
+                llmrig_execution_supported=probe.llmrig_execution_supported,
+                llmrig_benchmark_supported=probe.llmrig_benchmark_supported,
                 confidence=legacy.Confidence.HIGH,
                 evidence=evidence,
                 unknowns=tuple(dict.fromkeys(unknowns)),
