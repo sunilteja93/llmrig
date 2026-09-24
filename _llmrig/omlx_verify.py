@@ -30,7 +30,7 @@ def inventory_targets_from_statuses(
 ) -> Tuple[InventoryTarget, ...]:
     """Create one exact-provenance oMLX target or fail closed.
 
-    ``/v1/models`` display IDs may be aliases, so they are not sufficient to
+    The public model-list display IDs may be aliases, so they are not sufficient to
     assert Hugging Face identity. The detailed status endpoint exposes
     ``source_repo_id``; LLMRig accepts only an exact source-repository match.
     Multiple matching server IDs are treated as ambiguous rather than silently
@@ -53,12 +53,12 @@ def inventory_targets_from_statuses(
     selected = next(item for item in matches if item.model_id.strip() == unique_ids[0])
     observed = legacy.RecommendationEvidence(
         "verified-local-inventory",
-        "oMLX /v1/models/status",
+        "oMLX model-status API",
         "the model is present in the local oMLX API-visible inventory",
     )
     provenance = legacy.RecommendationEvidence(
         "verified-runtime-provenance",
-        "oMLX /v1/models/status source_repo_id",
+        "oMLX model-status source repository metadata",
         "oMLX reports an exact Hugging Face source repository match for the requested logical model",
     )
     unknowns = [
