@@ -13,6 +13,7 @@ import sys
 from typing import Optional, Sequence
 
 from .runtime_adapters import RuntimeProbe, probe_runtimes
+from .runtime_bridge import adapter_capabilities_for_legacy
 
 
 RUNTIME_SCHEMA_VERSION = "0.1"
@@ -151,6 +152,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _print_augmented_help()
 
     import llmrig as legacy
+
+    if values and values[0] == "solve":
+        # Keep the established solve implementation and schema, but feed its
+        # runtime capability reads from the v0.8 adapter registry. The bridge is
+        # scoped to this call so unrelated legacy commands retain current behavior.
+        with adapter_capabilities_for_legacy(legacy):
+            return legacy.main(values)
 
     return legacy.main(values)
 
