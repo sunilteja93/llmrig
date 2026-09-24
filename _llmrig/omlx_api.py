@@ -8,6 +8,7 @@ paths.
 
 from __future__ import annotations
 
+import http.cookiejar
 import json
 import math
 import os
@@ -61,6 +62,17 @@ class OmlxModelStatus:
             "loaded": self.loaded,
             "max_model_len": self.max_model_len,
         }
+
+
+@dataclass(frozen=True)
+class OmlxHfDownloadRecord:
+    """Path-free provenance retained by the oMLX Hugging Face downloader."""
+
+    repo_id: str
+    status: str
+
+    def to_dict(self) -> Dict[str, str]:
+        return {"repo_id": self.repo_id, "status": self.status}
 
 
 @dataclass(frozen=True)
@@ -184,6 +196,18 @@ def _headers() -> Dict[str, str]:
     return headers
 
 
+def _decode_json_body(body: bytes) -> Dict[str, Any]:
+    if len(body) > _MAX_RESPONSE_BYTES:
+        raise OmlxApiError("oMLX returned an unexpectedly large JSON response")
+    try:
+        decoded = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise OmlxApiError("oMLX returned invalid JSON") from None
+    if not isinstance(decoded, dict):
+        raise OmlxApiError("oMLX returned an unexpected JSON shape")
+    return decoded
+
+
 def _request_json(
     base_url: str,
     path: str,
@@ -211,15 +235,7 @@ def _request_json(
     except (urllib.error.URLError, OSError, TimeoutError):
         raise OmlxApiError("the local oMLX API is unavailable") from None
 
-    if len(body) > _MAX_RESPONSE_BYTES:
-        raise OmlxApiError("oMLX returned an unexpectedly large JSON response")
-    try:
-        decoded = json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        raise OmlxApiError("oMLX returned invalid JSON") from None
-    if not isinstance(decoded, dict):
-        raise OmlxApiError("oMLX returned an unexpected JSON shape")
-    return decoded
+    return _decode_json_body(body)
 
 
 def list_models(
@@ -230,7 +246,7 @@ def list_models(
     payload = _request_json(base_url, "/v1/models", timeout=timeout)
     data = payload.get("data")
     if not isinstance(data, list):
-        raise OmlxApiError("oMLX /v1/models response is missing a model list")
+        raise OmlxApiError("oMLX model-list response is missing a model list")
 
     models = []
     seen = set()
@@ -255,7 +271,7 @@ def list_model_statuses(
     base_url: str = DEFAULT_OMLX_BASE_URL,
     timeout: float = 3.0,
 ) -> Tuple[OmlxModelStatus, ...]:
-    """Read path-free provenance from ``GET /v1/models/status``.
+    """Read path-free provenance from the detailed model-status API.
 
     oMLX's detailed status can contain private fields such as ``model_path``.
     LLMRig intentionally discards every field except the public model ID,
@@ -264,7 +280,7 @@ def list_model_statuses(
     payload = _request_json(base_url, "/v1/models/status", timeout=timeout)
     data = payload.get("models")
     if not isinstance(data, list):
-        raise OmlxApiError("oMLX /v1/models/status response is missing a model list")
+        raise OmlxApiError("oMLX model-status response is missing a model list")
 
     models = []
     seen = set()
@@ -288,6 +304,80 @@ def list_model_statuses(
             )
         )
     return tuple(sorted(models, key=lambda item: item.model_id))
+
+
+def list_hf_download_records(
+    base_url: str = DEFAULT_OMLX_BASE_URL,
+    timeout: float = 3.0,
+) -> Tuple[OmlxHfDownloadRecord, ...]:
+    """Read path-free Hugging Face download provenance from oMLX admin state.
+
+    oMLX 0.6.x dashboard downloads retain the exact Hub ``repo_id`` in the
+    downloader task registry even when model discovery later reports the model as
+    a generic local directory with no ``source_repo_id``. The admin task endpoint
+    is session-protected, so LLMRig exchanges ``OMLX_API_KEY`` for a short-lived
+    in-memory cookie and never serializes the key or cookie.
+
+    If no API key is available, callers receive no records and must fail closed.
+    """
+    api_key = os.environ.get("OMLX_API_KEY")
+    if not api_key:
+        return ()
+
+    cookie_jar = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(cookie_jar)
+    )
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": "llmrig-omlx-adapter",
+    }
+    login_request = urllib.request.Request(
+        base_url.rstrip("/") + "/admin/api/login",
+        data=json.dumps({"api_key": api_key, "remember": False}).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with opener.open(login_request, timeout=timeout) as response:
+            login_payload = _decode_json_body(
+                response.read(_MAX_RESPONSE_BYTES + 1)
+            )
+        if login_payload.get("success") is not True:
+            raise OmlxApiError("oMLX admin authentication failed")
+
+        tasks_request = urllib.request.Request(
+            base_url.rstrip("/") + "/admin/api/hf/tasks",
+            headers=headers,
+            method="GET",
+        )
+        with opener.open(tasks_request, timeout=timeout) as response:
+            payload = _decode_json_body(response.read(_MAX_RESPONSE_BYTES + 1))
+    except urllib.error.HTTPError as error:
+        raise OmlxApiError("oMLX admin API returned HTTP status %s" % error.code) from None
+    except (urllib.error.URLError, OSError, TimeoutError):
+        raise OmlxApiError("the local oMLX admin API is unavailable") from None
+
+    data = payload.get("tasks")
+    if not isinstance(data, list):
+        raise OmlxApiError("oMLX download registry is missing a task list")
+
+    records = []
+    seen = set()
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        repo_id = _optional_text(item.get("repo_id"))
+        status = _optional_text(item.get("status"))
+        if repo_id is None or status is None:
+            continue
+        key = (repo_id, status.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        records.append(OmlxHfDownloadRecord(repo_id, status.lower()))
+    return tuple(sorted(records, key=lambda item: (item.repo_id, item.status)))
 
 
 def measure_completion(
