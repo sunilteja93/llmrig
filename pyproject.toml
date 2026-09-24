@@ -54,6 +54,10 @@ Issues = "https://github.com/sunilteja93/llmrig/issues"
 Changelog = "https://github.com/sunilteja93/llmrig/blob/main/CHANGELOG.md"
 Security = "https://github.com/sunilteja93/llmrig/blob/main/SECURITY.md"
 Documentation = "https://github.com/sunilteja93/llmrig#readme"
+"Hugging Face Space" = "https://huggingface.co/spaces/sunilvadlamani/llmrig-autopilot"
+"Benchmark Passports" = "https://huggingface.co/datasets/sunilvadlamani/llmrig-benchmark-passports"
+"Hugging Face Collection" = "https://huggingface.co/collections/sunilvadlamani/llmrig-autopilot-for-local-ai-6ab56f4bc732154111d04d9b"
+"Launch Discussion" = "https://huggingface.co/spaces/sunilvadlamani/llmrig-autopilot/discussions/1"
 
 [project.scripts]
 llmrig = "_llmrig.cli:main"

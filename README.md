@@ -17,6 +17,17 @@
 
 LLMRig sits above local inference runtimes. **oMLX, Ollama, MLX-LM, and llama.cpp are execution paths; LLMRig decides what the current evidence supports for this model on this machine.**
 
+## Hugging Face
+
+Explore the public v0.9 launch assets on Hugging Face:
+
+- [LLMRig Autopilot Space](https://huggingface.co/spaces/sunilvadlamani/llmrig-autopilot) — static, evidence-first walkthrough of the Autopilot flow
+- [Benchmark Passports dataset](https://huggingface.co/datasets/sunilvadlamani/llmrig-benchmark-passports) — privacy-safe RigGraph measurement samples from the v0.9 Apple Silicon smoke
+- [LLMRig collection](https://huggingface.co/collections/sunilvadlamani/llmrig-autopilot-for-local-ai-6ab56f4bc732154111d04d9b) — Space, dataset, and referenced model grouped together
+- [Launch discussion](https://huggingface.co/spaces/sunilvadlamani/llmrig-autopilot/discussions/1) — reproducible v0.9 launch notes and evidence
+
+The Space is intentionally a static explainer: it does **not** inspect a visitor's machine or pretend cloud execution can infer local compatibility. Run LLMRig locally for real discovery, planning, execution, and verification.
+
 It deliberately keeps facts separate:
 
 ```text
