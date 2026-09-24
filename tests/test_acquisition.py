@@ -71,7 +71,9 @@ class AcquisitionTests(unittest.TestCase):
 
         snapshot = next(call for call in hub.calls if call[0] == "snapshot_download")
         self.assertEqual(snapshot[1]["revision"], "a" * 40)
-        self.assertEqual(snapshot[1]["local_dir"], "/private/omlx/org/model")
+        self.assertEqual(
+            Path(snapshot[1]["local_dir"]), Path("/private/omlx/org/model")
+        )
 
     def test_gguf_download_uses_exact_file_and_revision(self):
         hub = _FakeHub()
