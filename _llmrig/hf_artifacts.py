@@ -3,13 +3,13 @@
 This module separates *what repository metadata proves* from *what may run*.
 Hub file names, tags, and config fields are useful evidence, but they do not
 establish installation trust, local availability, or successful execution.
-Conflicting metadata fails closed instead of being resolved by guesswork.
+Conflicting or incomplete metadata fails closed instead of being guessed through.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Iterable, Mapping, Optional, Sequence, Tuple
 
 
@@ -97,7 +97,7 @@ class HubRepositoryClassification:
         }
 
 
-def _safe_size(value: Any) -> Optional[int]:
+def _positive_int(value: Any) -> Optional[int]:
     try:
         parsed = int(value)
     except (TypeError, ValueError):
@@ -107,17 +107,10 @@ def _safe_size(value: Any) -> Optional[int]:
 
 def sibling_size(sibling: Mapping[str, Any]) -> Optional[int]:
     raw = sibling.get("size")
-    if raw is None and isinstance(sibling.get("lfs"), Mapping):
-        raw = sibling["lfs"].get("size")
-    return _safe_size(raw)
-
-
-def _positive_int(value: Any) -> Optional[int]:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return None
-    return parsed if parsed > 0 else None
+    lfs = sibling.get("lfs")
+    if raw is None and isinstance(lfs, Mapping):
+        raw = lfs.get("size")
+    return _positive_int(raw)
 
 
 def _gguf_quantization(path: str) -> Tuple[Optional[str], str]:
@@ -145,8 +138,6 @@ def _runtime_hints(path: str, format_name: str, tags: Sequence[str]) -> Tuple[st
         or "mlx-community" in lower_path
     ):
         hints.extend(("mlx-lm", "omlx"))
-    # Runtime hints are intentionally weaker than format classification. Generic
-    # safetensors plus an `mlx` tag/path does not become an MLX artifact.
     return tuple(dict.fromkeys(hints))
 
 
@@ -154,11 +145,11 @@ def base_model_metadata(payload: Mapping[str, Any]) -> Tuple[Optional[str], str]
     candidates = []
     card_data = payload.get("cardData")
     if isinstance(card_data, Mapping):
-        base_model = card_data.get("base_model")
-        if isinstance(base_model, str):
-            candidates.append(base_model)
-        elif isinstance(base_model, Sequence) and not isinstance(base_model, (str, bytes)):
-            candidates.extend(item for item in base_model if isinstance(item, str))
+        value = card_data.get("base_model")
+        if isinstance(value, str):
+            candidates.append(value)
+        elif isinstance(value, (list, tuple)):
+            candidates.extend(item for item in value if isinstance(item, str))
     for tag in payload.get("tags") or ():
         if isinstance(tag, str) and tag.startswith("base_model:"):
             candidates.append(tag.split(":", 1)[1])
@@ -172,23 +163,23 @@ def base_model_metadata(payload: Mapping[str, Any]) -> Tuple[Optional[str], str]
 
 def context_metadata(payload: Mapping[str, Any]) -> Tuple[Optional[int], str, Tuple[str, ...]]:
     config = payload.get("config") if isinstance(payload.get("config"), Mapping) else {}
-    sources = []
-    values = []
-    containers = (("config", config),)
+    containers = [("config", config)]
     text_config = config.get("text_config") if isinstance(config, Mapping) else None
     if isinstance(text_config, Mapping):
-        containers += (("config.text_config", text_config),)
+        containers.append(("config.text_config", text_config))
+
+    observations = []
     for prefix, container in containers:
         for key in _CONTEXT_KEYS:
             value = _positive_int(container.get(key))
             if value is not None:
-                values.append(value)
-                sources.append(f"{prefix}.{key}")
-    unique = tuple(sorted(set(values)))
-    if len(unique) == 1:
-        return unique[0], "verified", tuple(sources)
-    if len(unique) > 1:
-        return None, "ambiguous", tuple(sources)
+                observations.append((f"{prefix}.{key}", value))
+    values = {value for _, value in observations}
+    sources = tuple(source for source, _ in observations)
+    if len(values) == 1:
+        return next(iter(values)), "verified", sources
+    if len(values) > 1:
+        return None, "ambiguous", sources
     return None, "unknown", ()
 
 
@@ -196,58 +187,55 @@ def explicit_quantization_metadata(
     payload: Mapping[str, Any],
 ) -> Tuple[Optional[str], str, Tuple[str, ...]]:
     config = payload.get("config") if isinstance(payload.get("config"), Mapping) else {}
-    candidates = []
-    sources = []
-
     quant_config = config.get("quantization_config") if isinstance(config, Mapping) else None
-    if isinstance(quant_config, Mapping):
-        method = quant_config.get("quant_method")
-        bits = _positive_int(quant_config.get("bits"))
-        if isinstance(method, str) and method.strip():
-            label = method.strip()
-            if bits is not None:
-                label = f"{label}-{bits}-bit"
-            candidates.append(label)
-            sources.append("config.quantization_config")
-        elif bits is not None:
-            candidates.append(f"{bits}-bit")
-            sources.append("config.quantization_config.bits")
-
     mlx_quant = config.get("quantization") if isinstance(config, Mapping) else None
+
+    method = None
+    quant_bits = None
+    mlx_bits = None
+    sources = []
+    if isinstance(quant_config, Mapping):
+        raw_method = quant_config.get("quant_method")
+        if isinstance(raw_method, str) and raw_method.strip():
+            method = raw_method.strip()
+            sources.append("config.quantization_config.quant_method")
+        quant_bits = _positive_int(quant_config.get("bits"))
+        if quant_bits is not None:
+            sources.append("config.quantization_config.bits")
     if isinstance(mlx_quant, Mapping):
-        bits = _positive_int(mlx_quant.get("bits"))
-        if bits is not None:
-            candidates.append(f"{bits}-bit")
+        mlx_bits = _positive_int(mlx_quant.get("bits"))
+        if mlx_bits is not None:
             sources.append("config.quantization.bits")
 
-    unique = tuple(dict.fromkeys(item for item in candidates if item))
-    if len(unique) == 1:
-        return unique[0], "verified", tuple(sources)
-    if len(unique) > 1:
+    if quant_bits is not None and mlx_bits is not None and quant_bits != mlx_bits:
         return None, "ambiguous", tuple(sources)
+    bits = quant_bits if quant_bits is not None else mlx_bits
+    if method is not None and bits is not None:
+        return f"{method}-{bits}-bit", "verified", tuple(sources)
+    if method is not None:
+        return method, "verified", tuple(sources)
+    if bits is not None:
+        return f"{bits}-bit", "verified", tuple(sources)
     return None, "unknown", ()
 
 
 def safetensors_weight_set(
     siblings: Iterable[Mapping[str, Any]],
 ) -> Tuple[Tuple[str, ...], Optional[int], str]:
-    files = [
-        item
-        for item in siblings
-        if str(item.get("rfilename") or item.get("path") or "")
-        .lower()
-        .endswith(".safetensors")
-    ]
     by_path = {}
-    for item in files:
+    for item in siblings:
         path = str(item.get("rfilename") or item.get("path") or "").strip()
-        if path:
+        if path.lower().endswith(".safetensors"):
             by_path.setdefault(path, item)
-    ordered = [by_path[path] for path in sorted(by_path)]
     paths = tuple(sorted(by_path))
+    ordered = [by_path[path] for path in paths]
     if not ordered:
         return (), None, "missing"
+
     if len(ordered) == 1:
+        shard = _SAFETENSORS_SHARD_RE.match(paths[0])
+        if shard is not None and (int(shard.group(2)) != 1 or int(shard.group(3)) != 1):
+            return paths, None, "ambiguous"
         size = sibling_size(ordered[0])
         return paths, size, "verified" if size is not None else "missing_size"
 
@@ -362,9 +350,9 @@ def classify_hub_file(
         size_bytes=size,
         quantization=quantization,
         runtime_hints=_runtime_hints(path, format_name, tags),
+        evidence=tuple(evidence),
         context_max=context_max,
         members=(path,),
-        evidence=tuple(evidence),
         unknowns=tuple(dict.fromkeys(unknowns)),
     )
 
@@ -391,6 +379,22 @@ def classify_hub_siblings(
     return tuple(by_path[path] for path in sorted(by_path))
 
 
+def _context_evidence(value: int, sources: Sequence[str]) -> HubEvidence:
+    return HubEvidence(
+        "verified-metadata",
+        "Hugging Face model config metadata",
+        "context limit is consistently reported by " + ", ".join(sources),
+    )
+
+
+def _quantization_evidence(value: str, sources: Sequence[str]) -> HubEvidence:
+    return HubEvidence(
+        "verified-metadata",
+        "Hugging Face model config metadata",
+        f"quantization {value} is explicitly reported by " + ", ".join(sources),
+    )
+
+
 def classify_hub_repository(
     requested_id: str,
     payload: Mapping[str, Any],
@@ -410,6 +414,17 @@ def classify_hub_repository(
     library_name = str(payload.get("library_name") or "").strip() or None
     siblings = tuple(item for item in (payload.get("siblings") or ()) if isinstance(item, Mapping))
 
+    context_evidence = (
+        _context_evidence(context_max, context_sources)
+        if context_status == "verified" and context_max is not None
+        else None
+    )
+    quant_evidence = (
+        _quantization_evidence(explicit_quant, quant_sources)
+        if quant_status == "verified" and explicit_quant is not None
+        else None
+    )
+
     repository_evidence = [
         HubEvidence(
             "verified-metadata",
@@ -417,7 +432,7 @@ def classify_hub_repository(
             "repository identity and metadata were returned by Hugging Face",
         )
     ]
-    unknowns = []
+    repository_unknowns = []
     if base_status == "verified":
         repository_evidence.append(
             HubEvidence(
@@ -427,33 +442,21 @@ def classify_hub_repository(
             )
         )
     elif base_status == "ambiguous":
-        unknowns.append("base model association is ambiguous")
-
-    if context_status == "verified":
-        repository_evidence.append(
-            HubEvidence(
-                "verified-metadata",
-                "Hugging Face model config metadata",
-                "context limit is consistently reported by " + ", ".join(context_sources),
-            )
-        )
+        repository_unknowns.append("base model association is ambiguous")
+    if context_evidence is not None:
+        repository_evidence.append(context_evidence)
     elif context_status == "ambiguous":
-        unknowns.append("context limit metadata is conflicting")
-
-    if quant_status == "verified":
-        repository_evidence.append(
-            HubEvidence(
-                "verified-metadata",
-                "Hugging Face model config metadata",
-                f"quantization {explicit_quant} is explicitly reported by "
-                + ", ".join(quant_sources),
-            )
-        )
+        repository_unknowns.append("context limit metadata is conflicting")
+    if quant_evidence is not None:
+        repository_evidence.append(quant_evidence)
     elif quant_status == "ambiguous":
-        unknowns.append("quantization metadata is conflicting")
+        repository_unknowns.append("quantization metadata is conflicting")
 
     artifacts = []
-    for item in sorted(siblings, key=lambda value: str(value.get("rfilename") or value.get("path") or "")):
+    for item in sorted(
+        siblings,
+        key=lambda value: str(value.get("rfilename") or value.get("path") or ""),
+    ):
         path = str(item.get("rfilename") or item.get("path") or "")
         if not path.lower().endswith(".gguf"):
             continue
@@ -464,35 +467,30 @@ def classify_hub_repository(
             library_name=library_name,
             context_max=context_max,
         )
-        if artifact is not None:
-            extra_unknowns = list(artifact.unknowns)
-            if context_status == "unknown":
-                extra_unknowns.append("context limit is unknown")
-            elif context_status == "ambiguous":
-                extra_unknowns.append("context limit metadata is conflicting")
-            extra_evidence = list(artifact.evidence)
-            if context_status == "verified":
-                extra_evidence.append(repository_evidence[-1] if repository_evidence[-1].source == "Hugging Face model config metadata" else HubEvidence(
-                    "verified-metadata",
-                    "Hugging Face model config metadata",
-                    "context limit is consistently reported by repository metadata",
-                ))
-            artifacts.append(
-                HubArtifact(
-                    **{
-                        **artifact.__dict__,
-                        "evidence": tuple(dict.fromkeys(extra_evidence)),
-                        "unknowns": tuple(dict.fromkeys(extra_unknowns)),
-                    }
-                )
+        if artifact is None:
+            continue
+        evidence = list(artifact.evidence)
+        unknowns = list(artifact.unknowns)
+        if context_evidence is not None:
+            evidence.append(context_evidence)
+        elif context_status == "ambiguous":
+            unknowns.append("context limit metadata is conflicting")
+        else:
+            unknowns.append("context limit is unknown")
+        artifacts.append(
+            replace(
+                artifact,
+                evidence=tuple(dict.fromkeys(evidence)),
+                unknowns=tuple(dict.fromkeys(unknowns)),
             )
+        )
 
     members, size_bytes, size_status = safetensors_weight_set(siblings)
     if members:
         explicit_mlx = str(library_name or "").lower() == "mlx"
         format_name = "MLX" if explicit_mlx else "safetensors"
         evidence = []
-        artifact_unknowns = ["runtime compatibility is unknown"]
+        unknowns = ["runtime compatibility is unknown"]
         if explicit_mlx:
             evidence.append(
                 HubEvidence(
@@ -506,12 +504,11 @@ def classify_hub_repository(
                 HubEvidence(
                     "deterministic-inference",
                     "Safetensors .safetensors extension rule",
-                    "repository contains a single complete safetensors weight set",
+                    "repository contains safetensors weight files",
                 )
             )
-            artifact_unknowns.append(
-                "generic safetensors do not establish MLX/oMLX compatibility"
-            )
+            unknowns.append("generic safetensors do not establish MLX/oMLX compatibility")
+
         if size_status == "verified" and size_bytes is not None:
             evidence.append(
                 HubEvidence(
@@ -521,56 +518,37 @@ def classify_hub_repository(
                 )
             )
         elif size_status == "ambiguous":
-            artifact_unknowns.append(
-                "artifact size is unknown because weight-file grouping is ambiguous"
-            )
+            unknowns.append("artifact size is unknown because weight-file grouping is ambiguous")
         else:
-            artifact_unknowns.append("artifact size is unknown")
+            unknowns.append("artifact size is unknown")
 
-        quantization = explicit_quant if quant_status == "verified" else None
-        if quant_status == "verified":
-            evidence.append(
-                HubEvidence(
-                    "verified-metadata",
-                    "Hugging Face model config metadata",
-                    f"quantization {explicit_quant} is explicitly reported",
-                )
-            )
+        quantization = explicit_quant if quant_evidence is not None else None
+        if quant_evidence is not None:
+            evidence.append(quant_evidence)
         elif quant_status == "ambiguous":
-            artifact_unknowns.append("quantization metadata is conflicting")
+            unknowns.append("quantization metadata is conflicting")
         else:
-            artifact_unknowns.append("quantization is unknown")
+            unknowns.append("quantization is unknown")
 
-        if context_status == "verified":
-            evidence.append(
-                HubEvidence(
-                    "verified-metadata",
-                    "Hugging Face model config metadata",
-                    "context limit is consistently reported by repository metadata",
-                )
-            )
+        if context_evidence is not None:
+            evidence.append(context_evidence)
         elif context_status == "ambiguous":
-            artifact_unknowns.append("context limit metadata is conflicting")
+            unknowns.append("context limit metadata is conflicting")
         else:
-            artifact_unknowns.append("context limit is unknown")
+            unknowns.append("context limit is unknown")
 
-        synthetic_path = "mlx" if explicit_mlx else "safetensors"
         artifacts.append(
             HubArtifact(
                 model_id=logical_model_id,
-                path=synthetic_path,
+                path="mlx" if explicit_mlx else "safetensors",
                 format=format_name,
                 size_bytes=size_bytes,
                 quantization=quantization,
-                runtime_hints=_runtime_hints(
-                    "/".join(members),
-                    format_name,
-                    tags,
-                ),
+                runtime_hints=_runtime_hints("/".join(members), format_name, tags),
+                evidence=tuple(dict.fromkeys(evidence)),
                 context_max=context_max,
                 members=members,
-                evidence=tuple(evidence),
-                unknowns=tuple(dict.fromkeys(artifact_unknowns)),
+                unknowns=tuple(dict.fromkeys(unknowns)),
             )
         )
 
@@ -586,7 +564,7 @@ def classify_hub_repository(
         quantization_status=quant_status,
         artifacts=tuple(artifacts),
         evidence=tuple(repository_evidence),
-        unknowns=tuple(dict.fromkeys(unknowns)),
+        unknowns=tuple(dict.fromkeys(repository_unknowns)),
     )
 
 
