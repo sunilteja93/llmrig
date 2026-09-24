@@ -307,6 +307,67 @@ def _merge_omlx_inventory_candidate(legacy: Any, result: Any) -> Any:
     )
 
 
+def _aggregate_omlx_samples(legacy: Any, configuration: Any, samples: Sequence[Any]) -> Any:
+    """Aggregate available oMLX server metrics without inventing missing values."""
+    generation = [
+        float(item["generation_tps"])
+        for item in samples
+        if item.get("generation_tps") is not None
+    ]
+    prompt = [
+        float(item["prompt_tps"])
+        for item in samples
+        if item.get("prompt_tps") is not None
+    ]
+    latency = [
+        float(item["wall_seconds"])
+        for item in samples
+        if item.get("wall_seconds") is not None
+    ]
+    if not latency:
+        raise RuntimeError("oMLX server did not report usable inference latency")
+
+    warnings = [
+        "performance measurement does not establish model quality",
+        "oMLX OpenAI API does not expose a per-request KV-context allocation; the measurement uses the server's active context configuration",
+    ]
+    if len(generation) != len(samples) or len(prompt) != len(samples):
+        warnings.append(
+            "oMLX omitted per-phase timing metrics for one or more measured runs; latency uses server-reported total_time where needed and unavailable throughput dimensions remain unmeasured"
+        )
+
+    return legacy.RaceCompetitor(
+        logical_model_id=configuration.logical_model_id,
+        runtime=configuration.runtime,
+        artifact_id=configuration.artifact_id,
+        artifact_fingerprint=configuration.artifact_fingerprint,
+        artifact_format=configuration.artifact_format,
+        quantization=configuration.quantization,
+        runtime_version=configuration.runtime_version,
+        execution_status="success",
+        generation_tps=(
+            round(sum(generation) / len(generation), 2) if generation else None
+        ),
+        prompt_eval_tps=(round(sum(prompt) / len(prompt), 2) if prompt else None),
+        total_latency_s=round(sum(latency) / len(latency), 4),
+        generated_tokens=sum(int(item["eval_count"]) for item in samples),
+        measured_runs=len(samples),
+        generation_samples=len(generation),
+        prompt_eval_samples=len(prompt),
+        latency_samples=len(latency),
+        timestamp=legacy.now_iso(),
+        evidence=(
+            legacy.RecommendationEvidence(
+                "measured",
+                "oMLX server usage",
+                f"{len(samples)} timed run(s) produced server-reported inference metrics",
+            ),
+        ),
+        warnings=tuple(dict.fromkeys(warnings)),
+        raw_samples=tuple(dict(item) for item in samples),
+    )
+
+
 class OmlxExecutionAdapter:
     """Bounded race-v2 execution over oMLX's OpenAI-compatible API."""
 
@@ -354,10 +415,23 @@ class OmlxExecutionAdapter:
                 continue
             if measurement.completion_tokens is None or measurement.completion_tokens <= 0:
                 raise RuntimeError("oMLX response did not report generated-token count")
-            try:
+
+            if measurement.race_ready:
                 sample = measurement.race_sample()
-            except OmlxApiError as error:
-                raise RuntimeError("oMLX server metrics are incomplete for race-v2") from error
+            else:
+                latency = measurement.race_latency_s
+                if latency is None or latency <= 0:
+                    raise RuntimeError(
+                        "oMLX server metrics are incomplete for race-v2"
+                    )
+                sample = {
+                    "generation_tps": measurement.generation_tps,
+                    "prompt_tps": measurement.prompt_tps,
+                    "wall_seconds": latency,
+                    "prompt_tokens": measurement.prompt_tokens,
+                    "generated_tokens": measurement.completion_tokens,
+                    "measurement_source": "omlx-server-usage",
+                }
             sample["eval_count"] = measurement.completion_tokens
             if measurement.prompt_tokens is not None:
                 sample["prompt_eval_count"] = measurement.prompt_tokens
@@ -365,20 +439,7 @@ class OmlxExecutionAdapter:
 
         if not samples:
             raise RuntimeError("no measured oMLX benchmark runs completed")
-        competitor = self._legacy.native_race_competitor(
-            target.configuration, samples, workload
-        )
-        return replace(
-            competitor,
-            warnings=tuple(
-                dict.fromkeys(
-                    competitor.warnings
-                    + (
-                        "oMLX OpenAI API does not expose a per-request KV-context allocation; the measurement uses the server's active context configuration",
-                    )
-                )
-            ),
-        )
+        return _aggregate_omlx_samples(self._legacy, target.configuration, samples)
 
 
 def _verification_configurations_with_omlx(
