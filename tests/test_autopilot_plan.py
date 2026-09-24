@@ -65,7 +65,7 @@ class AutopilotPlanTests(unittest.TestCase):
                 "reason": (
                     "One evidenced candidate is currently preferred."
                     if recommended
-                    else "Multiple viable candidates remain."
+                    else "No configuration is currently known to be runnable."
                 ),
                 "unknowns": [],
             },
@@ -90,14 +90,29 @@ class AutopilotPlanTests(unittest.TestCase):
         self.assertTrue(first.actions[0].mutating)
         self.assertFalse(first.actions[-1].mutating)
 
-    def test_inconclusive_solve_does_not_invent_selection(self):
+    def test_unique_actionable_setup_path_can_be_selected_without_ranking(self):
         plan = build_autopilot_plan(
             self.solve_payload(recommended=False), self.machine()
         )
 
+        self.assertEqual(plan.selected_candidate_id, "candidate-omlx")
+        self.assertEqual(plan.recommendation_status, "setup_selected")
+        self.assertIn("not a performance ranking", plan.recommendation_reason)
+        self.assertFalse(plan.blocked)
+
+    def test_multiple_actionable_setup_paths_remain_inconclusive(self):
+        payload = self.solve_payload(recommended=False)
+        second = self.candidate(
+            candidate_id="candidate-mlx",
+            runtime="mlx-lm",
+        )
+        payload["candidates"].append(second)
+        plan = build_autopilot_plan(payload, self.machine())
+
         self.assertIsNone(plan.selected_candidate_id)
         self.assertEqual(plan.actions, ())
         self.assertTrue(plan.blocked)
+        self.assertIn("Multiple compatible", plan.recommendation_reason)
         self.assertIn(
             "no unique evidenced candidate is selected for apply", plan.blockers
         )
