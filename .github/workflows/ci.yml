@@ -90,11 +90,15 @@ jobs:
               assert "llmrig.py" in names
               assert "_llmrig/__init__.py" in names
               assert "_llmrig/solve.py" in names
+              assert "_llmrig/cli.py" in names
+              assert "_llmrig/runtime_adapters.py" in names
           with tarfile.open(sdists[0]) as archive:
               names = {name.split("/", 1)[-1] for name in archive.getnames()}
               assert "llmrig.py" in names
               assert "_llmrig/__init__.py" in names
               assert "_llmrig/solve.py" in names
+              assert "_llmrig/cli.py" in names
+              assert "_llmrig/runtime_adapters.py" in names
               assert "pyproject.toml" in names
           PY
 
@@ -118,6 +122,7 @@ jobs:
           PY
           "$RUNNER_TEMP/llmrig-wheel/bin/llmrig" --version
           "$RUNNER_TEMP/llmrig-wheel/bin/llmrig" --help >/dev/null
+          "$RUNNER_TEMP/llmrig-wheel/bin/llmrig" runtimes --json >/dev/null
 
       - name: Install source distribution
         shell: bash
@@ -127,6 +132,16 @@ jobs:
           "$RUNNER_TEMP/llmrig-sdist/bin/python" -m pip install --no-deps dist/*.tar.gz
           cd "$RUNNER_TEMP"
           "$RUNNER_TEMP/llmrig-sdist/bin/python" -c "import llmrig, _llmrig; assert llmrig.VERSION == '0.7.0'"
+
+      - name: Install editable source and smoke-test outside checkout
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/llmrig-editable"
+          "$RUNNER_TEMP/llmrig-editable/bin/python" -m pip install --upgrade pip setuptools
+          "$RUNNER_TEMP/llmrig-editable/bin/python" -m pip install --editable "$GITHUB_WORKSPACE"
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/llmrig-editable/bin/python" -c "import llmrig, _llmrig; assert llmrig.VERSION == '0.7.0'"
+          "$RUNNER_TEMP/llmrig-editable/bin/llmrig" runtimes --json >/dev/null
 
   ci-success:
     name: CI Success
