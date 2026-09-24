@@ -119,7 +119,9 @@ jobs:
           import llmrig
 
           assert llmrig.VERSION == importlib.metadata.version("llmrig")
-          assert not (importlib.metadata.requires("llmrig") or [])
+          requirements = importlib.metadata.requires("llmrig") or []
+          assert len(requirements) == 1, requirements
+          assert requirements[0].lower().startswith("huggingface_hub"), requirements
           result = llmrig.solve("qwen3:0.6b")
           assert isinstance(result, llmrig.SolveResult)
           assert result.verification.status == "not_requested"

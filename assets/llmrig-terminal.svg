@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="450" viewBox="0 0 1200 450" role="img" aria-labelledby="title desc">
-<title id="title">LLMRig v0.8 runtime intelligence and solve flow</title>
-<desc id="desc">Terminal-style overview of LLMRig v0.8 detecting local runtimes, resolving model artifacts, deciding from evidence, running explicitly selected local configurations, and verifying them with measured race-v2 evidence.</desc>
+<title id="title">LLMRig v0.9 Autopilot for local AI</title>
+<desc id="desc">Terminal-style overview of LLMRig v0.9 planning an evidenced local AI setup, requiring explicit approval, applying supported actions, verifying current reality, and recording privacy-safe RigGraph evidence.</desc>
 
 <defs>
   <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
@@ -24,19 +24,11 @@
 <circle cx="72" cy="49" r="7" fill="#e3b341"/>
 <circle cx="96" cy="49" r="7" fill="#3fb950"/>
 
-<text x="128" y="56" fill="#8b949e" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="18">
-  local@rig:~$ llmrig solve MODEL
-</text>
+<text x="128" y="56" fill="#8b949e" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="18">local@rig:~$ llmrig run MODEL</text>
 
-<text x="58" y="116" fill="#58a6ff" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="29" font-weight="700">
-  EVIDENCE-DRIVEN CONTROL PLANE FOR LOCAL AI
-</text>
-<text x="58" y="148" fill="#c9d1d9" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="16">
-  runtime intelligence · artifact provenance · explicit local verification
-</text>
-<text x="58" y="176" fill="#a371f7" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" font-weight="700" letter-spacing=".8">
-  v0.8 / RUNTIME INTELLIGENCE
-</text>
+<text x="58" y="116" fill="#58a6ff" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="29" font-weight="700">AUTOPILOT FOR LOCAL AI</text>
+<text x="58" y="148" fill="#c9d1d9" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="16">plan from evidence · change nothing without permission · verify reality</text>
+<text x="58" y="176" fill="#a371f7" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" font-weight="700" letter-spacing=".8">v0.9 / PLAN → APPLY → VERIFY</text>
 
 <line x1="94" y1="228" x2="1090" y2="228" stroke="url(#rail)" stroke-width="3" opacity=".75"/>
 
@@ -44,45 +36,40 @@
   <g>
     <rect x="58" y="197" width="182" height="62" rx="10" fill="#0d1117" stroke="#58a6ff" stroke-width="2"/>
     <text x="78" y="220" fill="#8b949e" font-size="11">01 / DETECT</text>
-    <text x="78" y="243" fill="#c9d1d9" font-size="14">runtimes · hardware</text>
+    <text x="78" y="243" fill="#c9d1d9" font-size="14">machine · runtimes</text>
   </g>
-
   <g>
     <rect x="282" y="197" width="182" height="62" rx="10" fill="#0d1117" stroke="#58a6ff" stroke-width="2"/>
-    <text x="302" y="220" fill="#8b949e" font-size="11">02 / RESOLVE</text>
-    <text x="302" y="243" fill="#c9d1d9" font-size="14">artifact · provenance</text>
+    <text x="302" y="220" fill="#8b949e" font-size="11">02 / PLAN</text>
+    <text x="302" y="243" fill="#c9d1d9" font-size="14">artifact · actions</text>
   </g>
-
   <g>
     <rect x="506" y="197" width="182" height="62" rx="10" fill="#0d1117" stroke="#7ee787" stroke-width="2"/>
-    <text x="526" y="220" fill="#8b949e" font-size="11">03 / DECIDE</text>
-    <text x="526" y="243" fill="#c9d1d9" font-size="14">evidence · unknowns</text>
+    <text x="526" y="220" fill="#8b949e" font-size="11">03 / APPROVE</text>
+    <text x="526" y="243" fill="#c9d1d9" font-size="14">explicit intent</text>
   </g>
-
   <g>
     <rect x="730" y="197" width="182" height="62" rx="10" fill="#0d1117" stroke="#7ee787" stroke-width="2"/>
-    <text x="750" y="220" fill="#8b949e" font-size="11">04 / RUN</text>
-    <text x="750" y="243" fill="#c9d1d9" font-size="14">explicit local only</text>
+    <text x="750" y="220" fill="#8b949e" font-size="11">04 / APPLY</text>
+    <text x="750" y="243" fill="#c9d1d9" font-size="14">acquire · launch</text>
   </g>
-
   <g>
     <rect x="954" y="197" width="182" height="62" rx="10" fill="#0d1117" stroke="#a371f7" stroke-width="2"/>
     <text x="974" y="220" fill="#8b949e" font-size="11">05 / VERIFY</text>
-    <text x="974" y="243" fill="#c9d1d9" font-size="14">measured race-v2</text>
+    <text x="974" y="243" fill="#c9d1d9" font-size="14">measure · receipt</text>
   </g>
 
   <text x="58" y="306" fill="#8b949e" font-size="12">runtimes</text>
   <text x="132" y="306" fill="#c9d1d9" font-size="13">oMLX · Ollama · MLX-LM · llama.cpp</text>
 
-  <text x="58" y="338" fill="#8b949e" font-size="12">principle</text>
-  <text x="132" y="338" fill="#7ee787" font-size="13">unknown stays unknown · private locators stay private · measurement stays explicit</text>
+  <text x="58" y="338" fill="#8b949e" font-size="12">evidence</text>
+  <text x="132" y="338" fill="#7ee787" font-size="13">unknown stays unknown · prediction != measurement · private locators stay private</text>
 
-  <text x="58" y="370" fill="#8b949e" font-size="12">next</text>
-  <text x="132" y="370" fill="#a371f7" font-size="13">configure / apply remains opt-in roadmap work</text>
+  <text x="58" y="370" fill="#8b949e" font-size="12">memory</text>
+  <text x="132" y="370" fill="#a371f7" font-size="13">privacy-safe receipts · local RigGraph · comparable calibration only</text>
 
   <line x1="58" y1="394" x2="1136" y2="394" stroke="#21262d"/>
-
-  <text x="58" y="420" fill="#8b949e" font-size="12">Python 3.9+ · no third-party runtime deps · macOS / Windows / Linux</text>
+  <text x="58" y="420" fill="#8b949e" font-size="12">Python 3.9+ · macOS / Windows / Linux · read-only planning by default</text>
   <text x="1136" y="420" text-anchor="end" fill="#58a6ff" font-size="12">LLMRig / OPEN SOURCE</text>
 </g>
 </svg>

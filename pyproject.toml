@@ -5,12 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "llmrig"
 dynamic = ["version"]
-description = "Evidence-driven runtime, compatibility, and performance intelligence for local AI."
+description = "Autopilot for local AI: evidence-driven planning, controlled setup, and measured verification."
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
 license-files = ["LICENSE"]
-dependencies = []
+dependencies = [
+  "huggingface_hub>=0.34.6,<2",
+]
 authors = [
   {name = "Sunil Kumar Vadlamani"},
 ]
