@@ -5,9 +5,9 @@ module introduces a deliberately small, stdlib-only adapter boundary that can be
 adopted incrementally without changing existing solve semantics.
 
 Probes are observational only: they never install software, start services,
-download models, or execute model weights. Runtime-specific readiness and LLMRig
-support facts live on the adapter-produced probe so downstream bridges do not need
-to rediscover behavior from runtime names.
+download models, or execute model weights. Runtime-specific readiness, LLMRig
+support facts, and execution-adapter construction live on the registered adapter so
+downstream bridges do not need to rediscover behavior from runtime names.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Optional, Protocol, Sequence, Tuple
+from typing import Any, Mapping, Optional, Protocol, Sequence, Tuple
 
 
 @dataclass(frozen=True)
@@ -96,7 +96,7 @@ class RuntimeProbe:
 
 
 class RuntimeAdapter(Protocol):
-    """Observational adapter contract for local inference runtimes."""
+    """Capability, observation, and execution-routing contract for one runtime."""
 
     name: str
     availability_policy: str
@@ -106,6 +106,8 @@ class RuntimeAdapter(Protocol):
     llmrig_benchmark_supported: bool
 
     def probe(self) -> RuntimeProbe: ...
+
+    def build_execution_adapter(self, legacy: Any) -> Any: ...
 
 
 def _run_version(command: Sequence[str]) -> Optional[str]:
@@ -158,7 +160,7 @@ def _path_or_none(command: str) -> Optional[str]:
 
 
 class OmlxRuntimeAdapter:
-    """Detect oMLX without importing it or starting its server."""
+    """Detect and route oMLX without starting its server."""
 
     name = "omlx"
     availability_policy = "service"
@@ -176,6 +178,13 @@ class OmlxRuntimeAdapter:
         # The oMLX macOS application installs this lightweight shim.
         shim = Path.home() / ".omlx" / "bin" / "omlx"
         return str(shim) if shim.is_file() and os.access(shim, os.X_OK) else None
+
+    def build_execution_adapter(self, legacy: Any) -> Any:
+        # Lazy import avoids a module cycle: omlx_verify imports this adapter for
+        # inventory observation, while the execution class itself lives there.
+        from .omlx_verify import OmlxExecutionAdapter
+
+        return OmlxExecutionAdapter(legacy)
 
     def probe(self) -> RuntimeProbe:
         cli_path = self._cli_path()
@@ -257,6 +266,9 @@ class OllamaRuntimeAdapter:
     llmrig_benchmark_supported = True
     default_endpoint = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 
+    def build_execution_adapter(self, legacy: Any) -> Any:
+        return legacy.OllamaExecutionAdapter(legacy.DEFAULT_OLLAMA_HOST)
+
     def probe(self) -> RuntimeProbe:
         cli_path = _path_or_none("ollama")
         installed = cli_path is not None
@@ -300,6 +312,9 @@ class LlamaCppRuntimeAdapter:
     llmrig_execution_supported = True
     llmrig_benchmark_supported = True
 
+    def build_execution_adapter(self, legacy: Any) -> Any:
+        return legacy.LlamaCppExecutionAdapter()
+
     def probe(self) -> RuntimeProbe:
         cli_path = next(
             (path for name in ("llama-cli", "llama.cpp") if (path := _path_or_none(name))),
@@ -340,6 +355,9 @@ class MlxLmRuntimeAdapter:
     llmrig_installation_supported = False
     llmrig_execution_supported = True
     llmrig_benchmark_supported = True
+
+    def build_execution_adapter(self, legacy: Any) -> Any:
+        return legacy.MlxExecutionAdapter()
 
     def probe(self) -> RuntimeProbe:
         try:
@@ -404,3 +422,16 @@ def probe_runtimes(
     """Probe runtimes in stable order without mutating the machine."""
 
     return tuple(adapter.probe() for adapter in adapters)
+
+
+def build_execution_adapters(
+    legacy: Any,
+    adapters: Sequence[RuntimeAdapter] = DEFAULT_RUNTIME_ADAPTERS,
+) -> Tuple[Any, ...]:
+    """Build supported verification adapters in the same stable registry order."""
+
+    return tuple(
+        adapter.build_execution_adapter(legacy)
+        for adapter in adapters
+        if adapter.llmrig_execution_supported and adapter.llmrig_benchmark_supported
+    )
