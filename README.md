@@ -293,15 +293,15 @@ Python runtime dependencies. A source checkout can also run `python3 llmrig.py`.
 
 v0.8 establishes the adapter/evidence foundation. v0.9 is planned to add explicit
 plan/apply actions for acquisition, configuration, and launch. See
-[`ROADMAP_V1.md`](ROADMAP_V1.md).
+[`ROADMAP_V1.md`](https://github.com/sunilteja93/llmrig/blob/main/ROADMAP_V1.md).
 
 ## Project docs
 
-- [`CHANGELOG.md`](CHANGELOG.md) — canonical release history
-- [`ROADMAP_V1.md`](ROADMAP_V1.md) — product direction
-- [`RELEASING.md`](RELEASING.md) — GitHub Release and PyPI process
-- [`SECURITY.md`](SECURITY.md) — security policy and trust boundaries
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) — contribution guide
+- [`CHANGELOG.md`](https://github.com/sunilteja93/llmrig/blob/main/CHANGELOG.md) — canonical release history
+- [`ROADMAP_V1.md`](https://github.com/sunilteja93/llmrig/blob/main/ROADMAP_V1.md) — product direction
+- [`RELEASING.md`](https://github.com/sunilteja93/llmrig/blob/main/RELEASING.md) — GitHub Release and PyPI process
+- [`SECURITY.md`](https://github.com/sunilteja93/llmrig/blob/main/SECURITY.md) — security policy and trust boundaries
+- [`CONTRIBUTING.md`](https://github.com/sunilteja93/llmrig/blob/main/CONTRIBUTING.md) — contribution guide
 
 ## License
 

@@ -2,6 +2,14 @@
 
 All notable changes to LLMRig will be documented here.
 
+## 0.8.1 - 2026-09-24
+
+### Fixed / Documentation
+
+- Replace repository-relative README documentation links with absolute GitHub URLs so the PyPI long description no longer sends users to `pypi.org/...` 404 pages.
+- Add regression coverage that rejects non-portable relative Markdown and HTML links in the PyPI-facing README.
+- No runtime, solve, benchmark, evidence, or Autopilot behavior changes.
+
 ## 0.8.0 - 2026-09-24
 
 ### Runtime intelligence
