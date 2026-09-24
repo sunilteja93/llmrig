@@ -251,6 +251,61 @@ class OmlxVerifyTests(unittest.TestCase):
             )
         )
 
+    def test_execution_adapter_accepts_latency_only_server_metrics(self):
+        configuration = llmrig.RaceConfiguration(
+            "org/model",
+            "omlx",
+            "hf://org/model/mlx",
+            "MLX",
+            None,
+            "omlx 0.6.4",
+            True,
+        )
+        target = llmrig.ExecutionTarget(configuration, "org--model")
+        workload = llmrig.RaceWorkload(
+            prompt="deterministic prompt",
+            context=4096,
+            num_predict=16,
+            runs=2,
+            warmup_runs=1,
+            warmup_num_predict=4,
+        )
+
+        def measured(model_id, prompt, max_tokens, **kwargs):
+            return OmlxMeasurement(
+                model_id=model_id,
+                prompt_tokens=6,
+                completion_tokens=max_tokens,
+                generation_tps=None,
+                prompt_tps=None,
+                total_time_s=1.0,
+                prompt_eval_duration_s=None,
+                generation_duration_s=None,
+                time_to_first_token_s=None,
+            )
+
+        with mock.patch("_llmrig.omlx_verify.measure_completion", side_effect=measured):
+            competitor = OmlxExecutionAdapter(llmrig).benchmark(target, workload)
+
+        self.assertEqual(competitor.execution_status, "success")
+        self.assertIsNone(competitor.generation_tps)
+        self.assertIsNone(competitor.prompt_eval_tps)
+        self.assertEqual(competitor.total_latency_s, 1.0)
+        self.assertEqual(competitor.generated_tokens, 32)
+        self.assertEqual(competitor.measured_runs, 2)
+        self.assertEqual(competitor.generation_samples, 0)
+        self.assertEqual(competitor.prompt_eval_samples, 0)
+        self.assertEqual(competitor.latency_samples, 2)
+        self.assertTrue(
+            any("server-reported total_time" in warning for warning in competitor.warnings)
+        )
+        self.assertTrue(
+            all(
+                sample.get("measurement_source") == "omlx-server-usage"
+                for sample in competitor.raw_samples
+            )
+        )
+
     def test_execution_adapter_rejects_response_identity_change(self):
         configuration = llmrig.RaceConfiguration(
             "org/model", "omlx", "hf://org/model/mlx", "MLX", None, None, True
