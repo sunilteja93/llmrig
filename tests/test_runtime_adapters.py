@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
+from _llmrig.privacy import validate_public_text
 from _llmrig.runtime_adapters import (
     LlamaCppRuntimeAdapter,
     MlxLmRuntimeAdapter,
@@ -64,6 +65,11 @@ class RuntimeProbeTests(unittest.TestCase):
         self.assertIn("MLX", probe.supported_artifact_formats)
         self.assertEqual(probe.execution_api, "OpenAI-compatible /v1")
         self.assertFalse(probe.blockers)
+        self.assertIn("oMLX model inventory API", [item.source for item in probe.evidence])
+        for item in probe.evidence:
+            validate_public_text(item.kind, "runtime evidence kind")
+            validate_public_text(item.source, "runtime evidence source")
+            validate_public_text(item.detail, "runtime evidence detail")
 
     @mock.patch("_llmrig.runtime_adapters._json_endpoint_alive", return_value=False)
     @mock.patch("_llmrig.runtime_adapters._run_version", return_value="omlx 1.2.3")
