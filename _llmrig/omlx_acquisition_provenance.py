@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Any, Sequence, Tuple
+from contextlib import contextmanager
+from typing import Any, Iterator, Sequence, Tuple
 
 from .acquisition import AcquisitionRecord, completed_acquisitions
 from .inventory import InventoryRecord, InventoryTarget
-from .omlx_api import OmlxApiError, OmlxModelStatus, list_model_statuses
+from .omlx_api import (
+    DEFAULT_OMLX_BASE_URL,
+    OmlxApiError,
+    OmlxModelStatus,
+    list_model_statuses,
+)
 
 
 def inventory_targets_from_llmrig_acquisitions(
@@ -91,7 +97,7 @@ def observe_llmrig_acquired_omlx_inventory(
     legacy: Any,
     requested_logical_model_id: str,
     *,
-    base_url: str,
+    base_url: str = DEFAULT_OMLX_BASE_URL,
 ) -> Tuple[InventoryTarget, ...]:
     try:
         statuses = list_model_statuses(base_url=base_url)
@@ -104,3 +110,31 @@ def observe_llmrig_acquired_omlx_inventory(
         statuses,
         acquisitions,
     )
+
+
+@contextmanager
+def omlx_acquisition_for_legacy(legacy: Any) -> Iterator[None]:
+    """Add LLMRig acquisition provenance only when stronger oMLX evidence is absent."""
+
+    original_inventory = legacy._autopilot_explicit_native_inventory
+
+    def inventory(logical_model_id: str, values: Sequence[str]) -> Tuple[Any, ...]:
+        observed = tuple(original_inventory(logical_model_id, values))
+        if any(item.record.runtime == "omlx" for item in observed):
+            return observed
+        fallback = observe_llmrig_acquired_omlx_inventory(legacy, logical_model_id)
+        return tuple(
+            sorted(
+                observed + fallback,
+                key=lambda item: (
+                    item.record.runtime,
+                    item.record.public_artifact_id,
+                ),
+            )
+        )
+
+    legacy._autopilot_explicit_native_inventory = inventory
+    try:
+        yield
+    finally:
+        legacy._autopilot_explicit_native_inventory = original_inventory
