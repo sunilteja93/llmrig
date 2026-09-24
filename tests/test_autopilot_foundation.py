@@ -70,7 +70,7 @@ class AutopilotFoundationTests(unittest.TestCase):
 
         self.assertEqual(Path(llmrig.__file__).name, "llmrig.py")
         self.assertTrue(_llmrig.__spec__.submodule_search_locations)
-        self.assertEqual(llmrig.VERSION, "0.9.0")
+        self.assertEqual(llmrig.VERSION, "0.9.1")
         for symbol in (
             "Confidence",
             "RecommendationEvidence",

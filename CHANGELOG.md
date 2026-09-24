@@ -2,6 +2,19 @@
 
 All notable changes to LLMRig will be documented here.
 
+## 0.9.1 - 2026-09-24
+
+### Release / Documentation
+
+- Add the public Hugging Face Autopilot Space, Benchmark Passports dataset,
+  Collection, and launch discussion to the README and package metadata.
+- Align the PyPI-facing README and project metadata with the public v0.9
+  Hugging Face launch surfaces.
+- Update PyPI release smoke validation for the bundled `huggingface_hub`
+  dependency and retain manual recovery support for an existing release tag.
+- No runtime, planning, execution, verification, RigGraph, or benchmark
+  behavior changes.
+
 ## 0.9.0 - 2026-09-24
 
 ### Autopilot
