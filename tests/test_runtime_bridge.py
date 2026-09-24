@@ -21,6 +21,11 @@ class RuntimeBridgeTests(unittest.TestCase):
         platforms=("Darwin",),
         architectures=("arm64",),
         api=None,
+        availability_policy="local",
+        runtime_execution_capable=True,
+        installation_supported=False,
+        execution_supported=True,
+        benchmark_supported=True,
         blockers=(),
         unknowns=(),
     ):
@@ -34,6 +39,11 @@ class RuntimeBridgeTests(unittest.TestCase):
             supported_platforms=platforms,
             supported_architectures=architectures,
             execution_api=api,
+            availability_policy=availability_policy,
+            runtime_execution_capable=runtime_execution_capable,
+            llmrig_installation_supported=installation_supported,
+            llmrig_execution_supported=execution_supported,
+            llmrig_benchmark_supported=benchmark_supported,
             evidence=(RuntimeEvidence("verified", "test probe", "observed runtime state"),),
             blockers=blockers,
             unknowns=unknowns,
@@ -48,6 +58,7 @@ class RuntimeBridgeTests(unittest.TestCase):
             cli_path="~/.omlx/bin/omlx",
             formats=("MLX",),
             api="OpenAI-compatible /v1",
+            availability_policy="service",
         )
         capability = runtime_bridge.capabilities_from_probes(
             llmrig, {"os": "Darwin", "arch": "arm64"}, (probe,)
@@ -69,6 +80,7 @@ class RuntimeBridgeTests(unittest.TestCase):
             cli_path="~/.omlx/bin/omlx",
             formats=("MLX",),
             api="OpenAI-compatible /v1",
+            availability_policy="service",
             unknowns=("oMLX is installed but its default local service is not responding",),
         )
         capability = runtime_bridge.capabilities_from_probes(llmrig, {}, (probe,))[0]
@@ -89,11 +101,32 @@ class RuntimeBridgeTests(unittest.TestCase):
             platforms=("Darwin", "Linux", "Windows"),
             architectures=(),
             api="local CLI",
+            availability_policy="cli-version",
             unknowns=("runtime version is unknown",),
         )
         capability = runtime_bridge.capabilities_from_probes(llmrig, {}, (probe,))[0]
         self.assertFalse(capability.available)
         self.assertIn("supported architectures are unknown", capability.unknowns)
+
+    def test_bridge_does_not_infer_capability_policy_from_runtime_name(self):
+        probe = self.probe(
+            "future-runtime",
+            installed=True,
+            service_available=False,
+            version="9.9",
+            cli_path="/usr/local/bin/future-runtime",
+            availability_policy="service",
+            runtime_execution_capable=False,
+            installation_supported=True,
+            execution_supported=False,
+            benchmark_supported=False,
+        )
+        capability = runtime_bridge.capabilities_from_probes(llmrig, {}, (probe,))[0]
+        self.assertFalse(capability.available)
+        self.assertFalse(capability.runtime_execution_capable)
+        self.assertTrue(capability.llmrig_installation_supported)
+        self.assertFalse(capability.llmrig_execution_supported)
+        self.assertFalse(capability.llmrig_benchmark_supported)
 
     def test_solve_cli_temporarily_uses_adapter_capabilities(self):
         omlx = self.probe(
@@ -102,6 +135,7 @@ class RuntimeBridgeTests(unittest.TestCase):
             service_available=False,
             formats=("MLX",),
             api="OpenAI-compatible /v1",
+            availability_policy="service",
         )
         ollama = self.probe(
             "ollama",
@@ -113,6 +147,7 @@ class RuntimeBridgeTests(unittest.TestCase):
             platforms=("Darwin", "Linux", "Windows"),
             architectures=(),
             api="Ollama HTTP API",
+            availability_policy="service",
         )
         original = llmrig.runtime_capabilities
         seen = []
