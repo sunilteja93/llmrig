@@ -174,7 +174,7 @@ class OmlxRuntimeAdapter:
             evidence.append(
                 RuntimeEvidence(
                     "verified-local-runtime",
-                    "oMLX /v1/models endpoint",
+                    "oMLX model inventory API",
                     "the local OpenAI-compatible oMLX endpoint responded with JSON",
                 )
             )
