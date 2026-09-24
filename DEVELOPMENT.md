@@ -11,6 +11,10 @@ python -m pip install --upgrade pip
 python -m pip install .
 ```
 
+A PEP 660 editable install (`python -m pip install -e .`) is also exercised by CI,
+but a normal local install is the conservative default when a platform-specific
+editable-install environment behaves differently.
+
 Confirm that the active command comes from the repository environment:
 
 ```bash
