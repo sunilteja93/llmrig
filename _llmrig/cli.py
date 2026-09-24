@@ -12,6 +12,7 @@ import json
 import sys
 from typing import Optional, Sequence
 
+from .hf_bridge import hf_metadata_for_legacy
 from .omlx_verify import omlx_verify_for_legacy
 from .runtime_adapters import RuntimeProbe, probe_runtimes
 from .runtime_bridge import adapter_capabilities_for_legacy
@@ -154,14 +155,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     import llmrig as legacy
 
-    if values and values[0] == "solve":
-        # Keep the established solve implementation and schema, but feed its
-        # capability, inventory, and explicit verification boundaries from the
-        # v0.8 adapter layer. These patches exist only for this command call.
-        with adapter_capabilities_for_legacy(legacy), omlx_verify_for_legacy(legacy):
-            return legacy.main(values)
+    # Hub metadata hardening is read-only and applies to every legacy command
+    # that resolves Hugging Face metadata. It never downloads or mutates models.
+    with hf_metadata_for_legacy(legacy):
+        if values and values[0] == "solve":
+            # Keep the established solve implementation and schema, but feed its
+            # capability, inventory, and explicit verification boundaries from the
+            # v0.8 adapter layer. These patches exist only for this command call.
+            with adapter_capabilities_for_legacy(legacy), omlx_verify_for_legacy(legacy):
+                return legacy.main(values)
 
-    return legacy.main(values)
+        return legacy.main(values)
 
 
 if __name__ == "__main__":
