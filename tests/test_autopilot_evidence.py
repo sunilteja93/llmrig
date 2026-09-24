@@ -74,6 +74,8 @@ class AutopilotEvidenceTests(unittest.TestCase):
             started_at="2026-09-24T16:00:00+00:00",
             completed_at="2026-09-24T16:00:05+00:00",
             actions=(action,),
+            context_tokens=32768,
+            artifact_revision="a" * 40,
             endpoint="http://127.0.0.1:8000/v1",
         )
         with tempfile.TemporaryDirectory() as directory, mock.patch(
@@ -83,6 +85,7 @@ class AutopilotEvidenceTests(unittest.TestCase):
         self.assertIsNotNone(record)
         payload = record.to_dict()
         self.assertEqual(payload["measurement"]["generation_tps"], 31.0)
+        self.assertEqual(payload["context_tokens"], 32768)
         self.assertIsNone(payload["prediction"]["generation_tps"])
         self.assertIsNone(payload["calibration"]["generation_tps_delta"])
 

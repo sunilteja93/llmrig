@@ -89,6 +89,34 @@ class AcquisitionTests(unittest.TestCase):
         self.assertEqual(call[1]["revision"], "a" * 40)
         self.assertEqual(acquired.record.acquisition_kind, "huggingface-file")
 
+    def test_rehydrate_uses_only_exact_local_cache_and_pinned_revision(self):
+        hub = _FakeHub()
+        record = acquisition.AcquisitionRecord(
+            artifact_id="hf://org/model/mlx",
+            repository_id="org/model",
+            revision="c" * 40,
+            runtime="mlx-lm",
+            acquisition_kind="huggingface-snapshot",
+            status="completed",
+            completed_at="2026-09-24T15:00:00+00:00",
+        )
+        with mock.patch.object(
+            acquisition, "_hub_module", return_value=hub
+        ), mock.patch.object(
+            acquisition, "completed_acquisitions", return_value=(record,)
+        ):
+            acquired = acquisition.rehydrate_huggingface_artifact(
+                "hf://org/model/mlx",
+                "mlx-lm",
+                revision="c" * 40,
+            )
+
+        self.assertEqual(acquired.record, record)
+        snapshot = next(call for call in hub.calls if call[0] == "snapshot_download")
+        self.assertEqual(snapshot[1]["revision"], "c" * 40)
+        self.assertTrue(snapshot[1]["local_files_only"])
+        self.assertFalse(any(call[0] == "model_info" for call in hub.calls))
+
     def test_registry_persists_only_path_free_records(self):
         record = acquisition.AcquisitionRecord(
             artifact_id="hf://org/model/mlx",

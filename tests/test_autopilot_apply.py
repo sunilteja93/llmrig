@@ -97,6 +97,8 @@ class AutopilotApplyTests(unittest.TestCase):
 
         self.assertEqual(receipt.status, "completed")
         self.assertEqual(receipt.verification, verification)
+        self.assertEqual(receipt.context_tokens, 32768)
+        self.assertEqual(receipt.artifact_revision, "a" * 40)
         self.assertTrue(all(action.success for action in receipt.actions))
         rendered = str(receipt.to_dict())
         self.assertNotIn("/private/local/model", rendered)

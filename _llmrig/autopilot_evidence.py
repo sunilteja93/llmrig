@@ -40,7 +40,7 @@ def record_receipt_evidence(
         artifact_id=receipt.artifact_id,
         artifact_format=receipt.artifact_format,
         quantization=receipt.quantization,
-        context_tokens=selected.context_tokens,
+        context_tokens=receipt.context_tokens,
         prediction=prediction or {},
         measurement=measurement,
         receipt_id=receipt.receipt_id,

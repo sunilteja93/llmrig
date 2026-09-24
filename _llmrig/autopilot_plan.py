@@ -61,6 +61,7 @@ class AutopilotCandidate:
     recipe_steps: Tuple[str, ...]
     blockers: Tuple[str, ...]
     unknowns: Tuple[str, ...]
+    artifact_revision: Optional[str] = None
 
     def __post_init__(self) -> None:
         validate_public_text(self.candidate_id, "Autopilot candidate id", identity=True)
@@ -68,6 +69,7 @@ class AutopilotCandidate:
         validate_public_text(self.artifact_id, "Autopilot artifact id", identity=True)
         validate_public_text(self.artifact_format, "Autopilot artifact format")
         validate_public_text(self.quantization, "Autopilot quantization")
+        validate_public_text(self.artifact_revision, "Autopilot artifact revision")
         validate_public_text(self.recipe_status, "Autopilot recipe status")
         if self.context_tokens is not None and self.context_tokens <= 0:
             raise ValueError("Autopilot candidate context must be positive")

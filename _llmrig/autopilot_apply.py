@@ -16,6 +16,7 @@ from .acquisition import (
     acquire_huggingface_artifact,
     acquisition_registry_file,
     parse_hf_artifact_id,
+    rehydrate_huggingface_artifact,
 )
 from .autopilot_actions import ActionKind, PlannedAction
 from .autopilot_plan import AutopilotCandidate, AutopilotExecutionPlan
@@ -127,6 +128,8 @@ class AutopilotReceipt:
     started_at: str
     completed_at: str
     actions: Tuple[ActionExecutionReceipt, ...]
+    context_tokens: Optional[int] = None
+    artifact_revision: Optional[str] = None
     endpoint: Optional[str] = None
     schema_version: str = APPLY_RECEIPT_SCHEMA_VERSION
 
@@ -143,6 +146,7 @@ class AutopilotReceipt:
             ("artifact id", self.artifact_id),
             ("artifact format", self.artifact_format),
             ("quantization", self.quantization),
+            ("artifact revision", self.artifact_revision),
             ("started at", self.started_at),
             ("completed at", self.completed_at),
             ("endpoint", self.endpoint),
@@ -152,6 +156,8 @@ class AutopilotReceipt:
                 f"apply receipt {label}",
                 identity=label in {"model", "logical model", "candidate id", "artifact id"},
             )
+        if self.context_tokens is not None and self.context_tokens <= 0:
+            raise ValueError("apply receipt context must be positive")
 
     @property
     def verification(self) -> Optional[VerificationRecord]:
@@ -173,6 +179,8 @@ class AutopilotReceipt:
                 "artifact_id": self.artifact_id,
                 "artifact_format": self.artifact_format,
                 "quantization": self.quantization,
+                "context_tokens": self.context_tokens,
+                "artifact_revision": self.artifact_revision,
             },
             "status": self.status,
             "started_at": self.started_at,
@@ -320,6 +328,25 @@ def _verify_candidate(
         state.locator = _resolve_omlx_locator(legacy, candidate)
     elif candidate.runtime == "ollama" and state.locator is None:
         state.locator = candidate.artifact_id
+    elif (
+        candidate.runtime in {"mlx-lm", "llama.cpp"}
+        and state.locator is None
+        and candidate.artifact_id.startswith("hf://")
+    ):
+        try:
+            state.acquired = rehydrate_huggingface_artifact(
+                candidate.artifact_id,
+                candidate.runtime,
+                revision=candidate.artifact_revision,
+            )
+            state.locator = legacy.validated_local_locator(
+                candidate.runtime,
+                state.acquired.locator,
+            )
+        except (AcquisitionError, OSError, RuntimeError, ValueError) as exc:
+            raise ApplyError(
+                "verification could not rehydrate the exact previously acquired artifact"
+            ) from exc
     if state.locator is None:
         raise ApplyError("verification requires a private local execution locator")
 
@@ -566,6 +593,13 @@ def apply_autopilot_plan(
     else:
         status = "failed"
 
+    actual_context = candidate.context_tokens or legacy.RACE_CONTEXT
+    artifact_revision = (
+        state.acquired.record.revision
+        if state.acquired is not None
+        else candidate.artifact_revision
+    )
+
     body = {
         "schema_version": APPLY_RECEIPT_SCHEMA_VERSION,
         "plan_id": plan.plan_id,
@@ -576,6 +610,8 @@ def apply_autopilot_plan(
         "artifact_id": candidate.artifact_id,
         "artifact_format": candidate.artifact_format,
         "quantization": candidate.quantization,
+        "context_tokens": actual_context,
+        "artifact_revision": artifact_revision,
         "status": status,
         "started_at": started_at,
         "completed_at": completed_at,
@@ -596,6 +632,8 @@ def apply_autopilot_plan(
         started_at=started_at,
         completed_at=completed_at,
         actions=tuple(receipts),
+        context_tokens=actual_context,
+        artifact_revision=artifact_revision,
         endpoint=body["endpoint"],
     )
     if persist_receipt:

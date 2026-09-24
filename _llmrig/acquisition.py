@@ -321,3 +321,58 @@ def acquire_huggingface_artifact(
     )
     record_acquisition(record)
     return AcquiredArtifact(record, str(locator))
+
+
+def rehydrate_huggingface_artifact(
+    artifact_id: str,
+    runtime: str,
+    *,
+    revision: Optional[str] = None,
+) -> AcquiredArtifact:
+    "Recover an exact prior acquisition from the local Hub cache only."
+
+    source = parse_hf_artifact_id(artifact_id)
+    matches = tuple(
+        item
+        for item in completed_acquisitions(
+            runtime=runtime,
+            repository_id=source.repository_id,
+        )
+        if item.artifact_id == artifact_id
+        and (revision is None or item.revision == revision)
+    )
+    if len(matches) != 1:
+        raise AcquisitionError(
+            "exact completed Hugging Face acquisition provenance is unavailable or ambiguous"
+        )
+    record = matches[0]
+    hub = _hub_module()
+    try:
+        if source.is_gguf_file:
+            locator = hub.hf_hub_download(
+                repo_id=source.repository_id,
+                filename=source.artifact_path,
+                revision=record.revision,
+                local_files_only=True,
+            )
+        elif source.is_snapshot:
+            locator = hub.snapshot_download(
+                repo_id=source.repository_id,
+                revision=record.revision,
+                local_files_only=True,
+            )
+        else:
+            raise AcquisitionError(
+                "the selected Hugging Face artifact shape is not supported for cache rehydration"
+            )
+    except AcquisitionError:
+        raise
+    except Exception as exc:
+        raise AcquisitionError(
+            "the previously acquired Hugging Face artifact is no longer available locally"
+        ) from exc
+    if not locator:
+        raise AcquisitionError(
+            "the previously acquired Hugging Face artifact is no longer available locally"
+        )
+    return AcquiredArtifact(record, str(locator))

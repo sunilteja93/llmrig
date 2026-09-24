@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import replace
 from typing import Optional, Sequence
 
 from .autopilot_apply import (
@@ -388,8 +389,15 @@ def command_verify(args: argparse.Namespace, legacy: object) -> int:
     if not isinstance(model, str) or not isinstance(candidate_payload, dict):
         print("llmrig verify: receipt is missing model/candidate identity", file=sys.stderr)
         return 2
+    receipt_context = candidate_payload.get("context_tokens")
+    if (
+        not isinstance(receipt_context, int)
+        or isinstance(receipt_context, bool)
+        or receipt_context <= 0
+    ):
+        receipt_context = None
     try:
-        plan = _build_plan(model, None, legacy)
+        plan = _build_plan(model, receipt_context, legacy)
     except (ValueError, legacy.SolveInputError) as exc:
         print(f"llmrig verify: {exc}", file=sys.stderr)
         return 2
@@ -419,14 +427,58 @@ def command_verify(args: argparse.Namespace, legacy: object) -> int:
             file=sys.stderr,
         )
         return 2
-    if plan.has_mutations:
+    expected_format = candidate_payload.get("artifact_format")
+    expected_quantization = candidate_payload.get("quantization")
+    if (
+        selected.artifact_format != expected_format
+        or selected.quantization != expected_quantization
+    ):
         print(
-            "llmrig verify: current state requires mutation; run plan/apply instead of verify",
+            "llmrig verify: current evidence no longer matches the receipt's exact artifact configuration",
             file=sys.stderr,
         )
         return 2
+
+    artifact_revision = candidate_payload.get("artifact_revision")
+    if artifact_revision is not None and not isinstance(artifact_revision, str):
+        print("llmrig verify: receipt artifact revision is invalid", file=sys.stderr)
+        return 2
+
+    verified_candidate = replace(
+        selected,
+        context_tokens=receipt_context or legacy.RACE_CONTEXT,
+        artifact_revision=artifact_revision,
+    )
+    verify_actions = tuple(
+        action for action in plan.actions if action.kind.value == "verify"
+    )
+    if len(verify_actions) != 1:
+        print(
+            "llmrig verify: current plan does not expose exactly one verification action",
+            file=sys.stderr,
+        )
+        return 2
+    verification_candidates = tuple(
+        verified_candidate if item.candidate_id == selected.candidate_id else item
+        for item in plan.candidates
+    )
+    verification_plan = AutopilotExecutionPlan(
+        plan_id=str(previous.get("plan_id") or plan.plan_id),
+        model=plan.model,
+        logical_model_id=plan.logical_model_id,
+        machine=plan.machine,
+        candidates=verification_candidates,
+        recommendation_status="verification_selected",
+        selected_candidate_id=verified_candidate.candidate_id,
+        recommendation_reason=(
+            "The receipt's exact configuration was re-observed for verification only."
+        ),
+        actions=verify_actions,
+        blockers=(),
+        unknowns=plan.unknowns,
+    )
     args.yes = True
-    return _apply(plan, args, legacy, False)
+    return _apply(verification_plan, args, legacy, False)
 
 
 def _print_augmented_help() -> int:
