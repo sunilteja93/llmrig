@@ -31,7 +31,7 @@ from _llmrig.solve import SolveCandidate, SolveResult
 
 PROJECT_NAME = "LLMRig"
 PROJECT_SLUG = "llmrig"
-VERSION = "0.9.0"
+VERSION = "0.9.1"
 CURATED_SNAPSHOT_DATE = "2026-08-19"
 DEFAULT_OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 HF_MODELS_API = "https://huggingface.co/api/models"
