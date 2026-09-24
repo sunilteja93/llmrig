@@ -22,7 +22,7 @@ from .omlx_api import (
     list_model_statuses,
     measure_completion,
 )
-from .runtime_adapters import OmlxRuntimeAdapter
+from .runtime_adapters import OmlxRuntimeAdapter, build_execution_adapters
 
 
 def _canonical_mlx_artifact_id(requested: str) -> str:
@@ -491,15 +491,10 @@ def verify_solve_result_with_omlx(
     ollama_targets: Sequence[Any],
     native_targets: Sequence[Any],
 ) -> Any:
-    """Run the existing verification pipeline with an additional oMLX adapter."""
+    """Run the existing verification pipeline with registry-provided adapters."""
     from .solve import apply_verification
 
-    adapters = (
-        legacy.OllamaExecutionAdapter(legacy.DEFAULT_OLLAMA_HOST),
-        legacy.LlamaCppExecutionAdapter(),
-        legacy.MlxExecutionAdapter(),
-        OmlxExecutionAdapter(legacy),
-    )
+    adapters = build_execution_adapters(legacy)
     eligible, ineligible, execution_targets, candidate_map = (
         _verification_configurations_with_omlx(
             legacy,

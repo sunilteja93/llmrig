@@ -95,6 +95,55 @@ class RuntimeBridgeTests(unittest.TestCase):
         self.assertFalse(capability.available)
         self.assertIn("supported architectures are unknown", capability.unknowns)
 
+    def test_bridge_consumes_custom_registry_contract_without_name_branching(self):
+        class FutureAdapter:
+            name = "future-runtime"
+            availability_policy = "service"
+            runtime_execution_capable = False
+            llmrig_installation_supported = True
+            llmrig_execution_supported = False
+            llmrig_benchmark_supported = False
+
+            def probe(self):
+                raise AssertionError("probe should not be called when an observation is supplied")
+
+            def build_execution_adapter(self, legacy):
+                raise AssertionError("execution construction is not part of capability translation")
+
+        probe = self.probe(
+            "future-runtime",
+            installed=True,
+            service_available=False,
+            version="9.9",
+            cli_path="/usr/local/bin/future-runtime",
+        )
+        capability = runtime_bridge.capabilities_from_probes(
+            llmrig,
+            {},
+            (probe,),
+            adapters=(FutureAdapter(),),
+        )[0]
+        self.assertFalse(capability.available)
+        self.assertFalse(capability.runtime_execution_capable)
+        self.assertTrue(capability.llmrig_installation_supported)
+        self.assertFalse(capability.llmrig_execution_supported)
+        self.assertFalse(capability.llmrig_benchmark_supported)
+
+    def test_unregistered_runtime_fails_closed_for_llmrig_support(self):
+        probe = self.probe(
+            "unregistered",
+            installed=True,
+            service_available=None,
+            version="1",
+            cli_path="/usr/local/bin/unregistered",
+        )
+        capability = runtime_bridge.capabilities_from_probes(
+            llmrig, {}, (probe,), adapters=()
+        )[0]
+        self.assertTrue(capability.available)
+        self.assertFalse(capability.llmrig_execution_supported)
+        self.assertFalse(capability.llmrig_benchmark_supported)
+
     def test_solve_cli_temporarily_uses_adapter_capabilities(self):
         omlx = self.probe(
             "omlx",

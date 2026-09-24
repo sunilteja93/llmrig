@@ -1,11 +1,13 @@
 """Runtime adapter foundation for LLMRig v0.8.
 
-The current public CLI still owns the stable behavior in :mod:`llmrig`.  This
+The current public CLI still owns the stable behavior in :mod:`llmrig`. This
 module introduces a deliberately small, stdlib-only adapter boundary that can be
 adopted incrementally without changing existing solve semantics.
 
-Probes are observational only: they never install software, start services,
-download models, or execute model weights.
+A :class:`RuntimeProbe` contains observation only. Runtime-specific readiness,
+LLMRig support facts, and verification construction live on the registered adapter.
+This keeps the registry as the single capability source while preserving existing
+probe fixtures and public runtime output.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Optional, Protocol, Sequence, Tuple
+from typing import Any, Mapping, Optional, Protocol, Sequence, Tuple
 
 
 @dataclass(frozen=True)
@@ -76,11 +78,18 @@ class RuntimeProbe:
 
 
 class RuntimeAdapter(Protocol):
-    """Small observational adapter contract for local inference runtimes."""
+    """Capability, observation, and execution-routing contract for one runtime."""
 
     name: str
+    availability_policy: str
+    runtime_execution_capable: bool
+    llmrig_installation_supported: bool
+    llmrig_execution_supported: bool
+    llmrig_benchmark_supported: bool
 
     def probe(self) -> RuntimeProbe: ...
+
+    def build_execution_adapter(self, legacy: Any) -> Any: ...
 
 
 def _run_version(command: Sequence[str]) -> Optional[str]:
@@ -132,10 +141,28 @@ def _path_or_none(command: str) -> Optional[str]:
     return str(value) if value else None
 
 
+def probe_capability_available(adapter: RuntimeAdapter, probe: RuntimeProbe) -> bool:
+    """Apply the registered adapter's readiness policy without runtime-name checks."""
+    if not probe.installed or probe.blockers:
+        return False
+    if adapter.availability_policy == "service":
+        return probe.service_available is True
+    if adapter.availability_policy == "cli-version":
+        return probe.cli_path is not None and probe.version is not None
+    if adapter.availability_policy == "local":
+        return probe.locally_usable
+    return False
+
+
 class OmlxRuntimeAdapter:
-    """Detect oMLX without importing it or starting its server."""
+    """Detect and route oMLX without starting its server."""
 
     name = "omlx"
+    availability_policy = "service"
+    runtime_execution_capable = True
+    llmrig_installation_supported = False
+    llmrig_execution_supported = True
+    llmrig_benchmark_supported = True
     default_endpoint = os.environ.get("OMLX_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 
     @staticmethod
@@ -146,6 +173,13 @@ class OmlxRuntimeAdapter:
         # The oMLX macOS application installs this lightweight shim.
         shim = Path.home() / ".omlx" / "bin" / "omlx"
         return str(shim) if shim.is_file() and os.access(shim, os.X_OK) else None
+
+    def build_execution_adapter(self, legacy: Any) -> Any:
+        # Lazy import avoids a module cycle: omlx_verify imports this adapter for
+        # inventory observation, while the execution class itself lives there.
+        from .omlx_verify import OmlxExecutionAdapter
+
+        return OmlxExecutionAdapter(legacy)
 
     def probe(self) -> RuntimeProbe:
         cli_path = self._cli_path()
@@ -215,7 +249,15 @@ class OmlxRuntimeAdapter:
 
 class OllamaRuntimeAdapter:
     name = "ollama"
+    availability_policy = "service"
+    runtime_execution_capable = True
+    llmrig_installation_supported = False
+    llmrig_execution_supported = True
+    llmrig_benchmark_supported = True
     default_endpoint = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
+
+    def build_execution_adapter(self, legacy: Any) -> Any:
+        return legacy.OllamaExecutionAdapter(legacy.DEFAULT_OLLAMA_HOST)
 
     def probe(self) -> RuntimeProbe:
         cli_path = _path_or_none("ollama")
@@ -249,6 +291,14 @@ class OllamaRuntimeAdapter:
 
 class LlamaCppRuntimeAdapter:
     name = "llama.cpp"
+    availability_policy = "cli-version"
+    runtime_execution_capable = True
+    llmrig_installation_supported = False
+    llmrig_execution_supported = True
+    llmrig_benchmark_supported = True
+
+    def build_execution_adapter(self, legacy: Any) -> Any:
+        return legacy.LlamaCppExecutionAdapter()
 
     def probe(self) -> RuntimeProbe:
         cli_path = next(
@@ -280,6 +330,14 @@ class LlamaCppRuntimeAdapter:
 
 class MlxLmRuntimeAdapter:
     name = "mlx-lm"
+    availability_policy = "cli-version"
+    runtime_execution_capable = True
+    llmrig_installation_supported = False
+    llmrig_execution_supported = True
+    llmrig_benchmark_supported = True
+
+    def build_execution_adapter(self, legacy: Any) -> Any:
+        return legacy.MlxExecutionAdapter()
 
     def probe(self) -> RuntimeProbe:
         try:
@@ -333,9 +391,31 @@ DEFAULT_RUNTIME_ADAPTERS: Tuple[RuntimeAdapter, ...] = (
 )
 
 
+def runtime_adapter_for(
+    runtime: str,
+    adapters: Sequence[RuntimeAdapter] = DEFAULT_RUNTIME_ADAPTERS,
+) -> Optional[RuntimeAdapter]:
+    """Return the unique registered adapter for a runtime, otherwise fail closed."""
+    matches = tuple(adapter for adapter in adapters if adapter.name == runtime)
+    return matches[0] if len(matches) == 1 else None
+
+
 def probe_runtimes(
     adapters: Sequence[RuntimeAdapter] = DEFAULT_RUNTIME_ADAPTERS,
 ) -> Tuple[RuntimeProbe, ...]:
     """Probe runtimes in stable order without mutating the machine."""
 
     return tuple(adapter.probe() for adapter in adapters)
+
+
+def build_execution_adapters(
+    legacy: Any,
+    adapters: Sequence[RuntimeAdapter] = DEFAULT_RUNTIME_ADAPTERS,
+) -> Tuple[Any, ...]:
+    """Build supported verification adapters in the same stable registry order."""
+
+    return tuple(
+        adapter.build_execution_adapter(legacy)
+        for adapter in adapters
+        if adapter.llmrig_execution_supported and adapter.llmrig_benchmark_supported
+    )
