@@ -21,7 +21,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Protocol, Sequence, Tuple
+from typing import Mapping, Optional, Protocol, Sequence, Tuple
 
 
 @dataclass(frozen=True)
@@ -103,11 +103,18 @@ def _run_version(command: Sequence[str]) -> Optional[str]:
     return lines[0][:200].replace(str(Path.home()), "~")
 
 
-def _json_endpoint_alive(url: str, timeout: float = 1.5) -> bool:
-    request = urllib.request.Request(
-        url,
-        headers={"Accept": "application/json", "User-Agent": "llmrig-runtime-probe"},
-    )
+def _json_endpoint_alive(
+    url: str,
+    timeout: float = 1.5,
+    headers: Optional[Mapping[str, str]] = None,
+) -> bool:
+    request_headers = {
+        "Accept": "application/json",
+        "User-Agent": "llmrig-runtime-probe",
+    }
+    if headers:
+        request_headers.update(headers)
+    request = urllib.request.Request(url, headers=request_headers)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = response.read(1024 * 1024)
@@ -148,7 +155,12 @@ class OmlxRuntimeAdapter:
         architecture = platform.machine().lower()
         platform_ok = system == "Darwin"
         architecture_ok = architecture in {"arm64", "aarch64"}
-        service_available = _json_endpoint_alive(f"{self.default_endpoint}/v1/models")
+        api_key = os.environ.get("OMLX_API_KEY")
+        auth_headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
+        service_available = _json_endpoint_alive(
+            f"{self.default_endpoint}/v1/models",
+            headers=auth_headers,
+        )
 
         blockers = []
         if installed and not platform_ok:
