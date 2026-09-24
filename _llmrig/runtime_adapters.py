@@ -55,12 +55,15 @@ class RuntimeProbe:
         return self.service_available is not False
 
     def to_dict(self) -> dict:
+        public_cli_path = (
+            self.cli_path.replace(str(Path.home()), "~") if self.cli_path else None
+        )
         return {
             "runtime": self.runtime,
             "installed": self.installed,
             "service_available": self.service_available,
             "version": self.version,
-            "cli_path": self.cli_path,
+            "cli_path": public_cli_path,
             "supported_artifact_formats": list(self.supported_artifact_formats),
             "supported_platforms": list(self.supported_platforms),
             "supported_architectures": list(self.supported_architectures),
