@@ -4,10 +4,10 @@ The current public CLI still owns the stable behavior in :mod:`llmrig`. This
 module introduces a deliberately small, stdlib-only adapter boundary that can be
 adopted incrementally without changing existing solve semantics.
 
-Probes are observational only: they never install software, start services,
-download models, or execute model weights. Runtime-specific readiness, LLMRig
-support facts, and execution-adapter construction live on the registered adapter so
-downstream bridges do not need to rediscover behavior from runtime names.
+A :class:`RuntimeProbe` contains observation only. Runtime-specific readiness,
+LLMRig support facts, and verification construction live on the registered adapter.
+This keeps the registry as the single capability source while preserving existing
+probe fixtures and public runtime output.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ class RuntimeEvidence:
 
 @dataclass(frozen=True)
 class RuntimeProbe:
-    """Read-only observation and capability contract for one local runtime."""
+    """Read-only observation of one runtime on the current machine."""
 
     runtime: str
     installed: bool
@@ -46,11 +46,6 @@ class RuntimeProbe:
     supported_platforms: Tuple[str, ...]
     supported_architectures: Tuple[str, ...]
     execution_api: Optional[str]
-    availability_policy: str = "local"
-    runtime_execution_capable: bool = True
-    llmrig_installation_supported: bool = False
-    llmrig_execution_supported: bool = False
-    llmrig_benchmark_supported: bool = False
     evidence: Tuple[RuntimeEvidence, ...] = ()
     blockers: Tuple[str, ...] = ()
     unknowns: Tuple[str, ...] = ()
@@ -60,19 +55,6 @@ class RuntimeProbe:
         if not self.installed or self.blockers:
             return False
         return self.service_available is not False
-
-    @property
-    def capability_available(self) -> bool:
-        """Apply the adapter-declared readiness policy without runtime-name checks."""
-        if not self.installed or self.blockers:
-            return False
-        if self.availability_policy == "service":
-            return self.service_available is True
-        if self.availability_policy == "cli-version":
-            return self.cli_path is not None and self.version is not None
-        if self.availability_policy == "local":
-            return self.locally_usable
-        return False
 
     def to_dict(self) -> dict:
         public_cli_path = (
@@ -157,6 +139,19 @@ def _json_endpoint_alive(
 def _path_or_none(command: str) -> Optional[str]:
     value = shutil.which(command)
     return str(value) if value else None
+
+
+def probe_capability_available(adapter: RuntimeAdapter, probe: RuntimeProbe) -> bool:
+    """Apply the registered adapter's readiness policy without runtime-name checks."""
+    if not probe.installed or probe.blockers:
+        return False
+    if adapter.availability_policy == "service":
+        return probe.service_available is True
+    if adapter.availability_policy == "cli-version":
+        return probe.cli_path is not None and probe.version is not None
+    if adapter.availability_policy == "local":
+        return probe.locally_usable
+    return False
 
 
 class OmlxRuntimeAdapter:
@@ -246,11 +241,6 @@ class OmlxRuntimeAdapter:
             supported_platforms=("Darwin",),
             supported_architectures=("arm64", "aarch64"),
             execution_api="OpenAI-compatible /v1",
-            availability_policy=self.availability_policy,
-            runtime_execution_capable=self.runtime_execution_capable,
-            llmrig_installation_supported=self.llmrig_installation_supported,
-            llmrig_execution_supported=self.llmrig_execution_supported,
-            llmrig_benchmark_supported=self.llmrig_benchmark_supported,
             evidence=tuple(evidence),
             blockers=tuple(blockers),
             unknowns=tuple(unknowns),
@@ -294,11 +284,6 @@ class OllamaRuntimeAdapter:
             supported_platforms=("Darwin", "Linux", "Windows"),
             supported_architectures=(),
             execution_api="Ollama HTTP API",
-            availability_policy=self.availability_policy,
-            runtime_execution_capable=self.runtime_execution_capable,
-            llmrig_installation_supported=self.llmrig_installation_supported,
-            llmrig_execution_supported=self.llmrig_execution_supported,
-            llmrig_benchmark_supported=self.llmrig_benchmark_supported,
             evidence=evidence,
             unknowns=unknowns,
         )
@@ -332,11 +317,6 @@ class LlamaCppRuntimeAdapter:
             supported_platforms=("Darwin", "Linux", "Windows"),
             supported_architectures=(),
             execution_api="local CLI",
-            availability_policy=self.availability_policy,
-            runtime_execution_capable=self.runtime_execution_capable,
-            llmrig_installation_supported=self.llmrig_installation_supported,
-            llmrig_execution_supported=self.llmrig_execution_supported,
-            llmrig_benchmark_supported=self.llmrig_benchmark_supported,
             evidence=(
                 RuntimeEvidence(
                     "deterministic-runtime-knowledge",
@@ -391,11 +371,6 @@ class MlxLmRuntimeAdapter:
             supported_platforms=("Darwin",),
             supported_architectures=("arm64", "aarch64"),
             execution_api="local CLI",
-            availability_policy=self.availability_policy,
-            runtime_execution_capable=self.runtime_execution_capable,
-            llmrig_installation_supported=self.llmrig_installation_supported,
-            llmrig_execution_supported=self.llmrig_execution_supported,
-            llmrig_benchmark_supported=self.llmrig_benchmark_supported,
             evidence=(
                 RuntimeEvidence(
                     "deterministic-runtime-knowledge",
@@ -414,6 +389,15 @@ DEFAULT_RUNTIME_ADAPTERS: Tuple[RuntimeAdapter, ...] = (
     MlxLmRuntimeAdapter(),
     LlamaCppRuntimeAdapter(),
 )
+
+
+def runtime_adapter_for(
+    runtime: str,
+    adapters: Sequence[RuntimeAdapter] = DEFAULT_RUNTIME_ADAPTERS,
+) -> Optional[RuntimeAdapter]:
+    """Return the unique registered adapter for a runtime, otherwise fail closed."""
+    matches = tuple(adapter for adapter in adapters if adapter.name == runtime)
+    return matches[0] if len(matches) == 1 else None
 
 
 def probe_runtimes(
