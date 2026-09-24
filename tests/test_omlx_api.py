@@ -4,6 +4,7 @@ from unittest import mock
 
 from _llmrig.omlx_api import (
     OmlxApiError,
+    list_hf_download_records,
     list_model_statuses,
     list_models,
     measure_completion,
@@ -25,6 +26,16 @@ class FakeResponse:
         if limit is None or limit < 0:
             return self._body
         return self._body[:limit]
+
+
+class FakeOpener:
+    def __init__(self, responses):
+        self._responses = iter(responses)
+        self.requests = []
+
+    def open(self, request, timeout=None):
+        self.requests.append(request)
+        return next(self._responses)
 
 
 class OmlxApiTests(unittest.TestCase):
@@ -104,6 +115,62 @@ class OmlxApiTests(unittest.TestCase):
         request = urlopen.call_args.args[0]
         self.assertEqual(request.get_method(), "GET")
         self.assertTrue(request.full_url.endswith("/v1/models/status"))
+
+    def test_hf_download_records_use_ephemeral_admin_session_and_keep_only_repo_state(self):
+        opener = FakeOpener(
+            [
+                FakeResponse({"success": True}),
+                FakeResponse(
+                    {
+                        "tasks": [
+                            {
+                                "repo_id": "mlx-community/Qwen3.5-27B-4bit",
+                                "status": "completed",
+                                "progress": 100.0,
+                                "downloaded_size": 123,
+                                "private_path": "/Users/private/model",
+                            },
+                            {
+                                "repo_id": "mlx-community/Qwen3.5-27B-4bit",
+                                "status": "completed",
+                            },
+                        ]
+                    }
+                ),
+            ]
+        )
+        with mock.patch.dict(
+            "_llmrig.omlx_api.os.environ",
+            {"OMLX_API_KEY": "secret-key"},
+            clear=False,
+        ), mock.patch(
+            "_llmrig.omlx_api.urllib.request.build_opener",
+            return_value=opener,
+        ):
+            records = list_hf_download_records("http://127.0.0.1:8000")
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].repo_id, "mlx-community/Qwen3.5-27B-4bit")
+        self.assertEqual(records[0].status, "completed")
+        serialized = json.dumps(records[0].to_dict())
+        self.assertNotIn("secret-key", serialized)
+        self.assertNotIn("private_path", serialized)
+        self.assertNotIn("/Users/private", serialized)
+        self.assertEqual(opener.requests[0].get_method(), "POST")
+        self.assertTrue(opener.requests[0].full_url.endswith("/admin/api/login"))
+        self.assertEqual(opener.requests[1].get_method(), "GET")
+        self.assertTrue(opener.requests[1].full_url.endswith("/admin/api/hf/tasks"))
+
+    def test_hf_download_records_fail_closed_without_api_key(self):
+        with mock.patch.dict(
+            "_llmrig.omlx_api.os.environ",
+            {},
+            clear=True,
+        ), mock.patch(
+            "_llmrig.omlx_api.urllib.request.build_opener"
+        ) as build_opener:
+            self.assertEqual(list_hf_download_records(), ())
+            build_opener.assert_not_called()
 
     def test_measure_completion_uses_server_metrics_for_race_sample(self):
         payload = {
