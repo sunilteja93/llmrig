@@ -16,41 +16,25 @@ from .inventory import InventoryRecord, InventoryTarget
 from .omlx_api import (
     DEFAULT_OMLX_BASE_URL,
     OmlxApiError,
+    OmlxHfDownloadRecord,
     OmlxModelStatus,
+    list_hf_download_records,
     list_model_statuses,
     measure_completion,
 )
 from .runtime_adapters import OmlxRuntimeAdapter
 
 
-def inventory_targets_from_statuses(
+def _inventory_target_for_status(
     legacy: Any,
-    requested_logical_model_id: str,
-    statuses: Sequence[OmlxModelStatus],
-) -> Tuple[InventoryTarget, ...]:
-    """Create one exact-provenance oMLX target or fail closed.
-
-    The public model-list display IDs may be aliases, so they are not sufficient to
-    assert Hugging Face identity. The detailed status endpoint exposes
-    ``source_repo_id``; LLMRig accepts only an exact source-repository match.
-    Multiple matching server IDs are treated as ambiguous rather than silently
-    choosing one.
-    """
-    requested = str(requested_logical_model_id or "").strip()
-    if not requested:
-        return ()
-    matches = tuple(
-        item
-        for item in statuses
-        if item.source_repo_id is not None
-        and item.source_repo_id.strip() == requested
-        and item.model_id.strip()
-    )
-    unique_ids = tuple(sorted({item.model_id.strip() for item in matches}))
-    if len(unique_ids) != 1:
-        return ()
-
-    selected = next(item for item in matches if item.model_id.strip() == unique_ids[0])
+    requested: str,
+    selected: OmlxModelStatus,
+    *,
+    association_kind: str,
+    provenance_source: str,
+    provenance_detail: str,
+    extra_unknowns: Sequence[str] = (),
+) -> InventoryTarget:
     observed = legacy.RecommendationEvidence(
         "verified-local-inventory",
         "oMLX model-status API",
@@ -58,15 +42,18 @@ def inventory_targets_from_statuses(
     )
     provenance = legacy.RecommendationEvidence(
         "verified-runtime-provenance",
-        "oMLX model-status source repository metadata",
-        "oMLX reports an exact Hugging Face source repository match for the requested logical model",
+        provenance_source,
+        provenance_detail,
     )
     unknowns = [
         "artifact content digest is unknown",
         "quantization is unknown",
+        *extra_unknowns,
     ]
     if selected.loaded is False:
-        unknowns.append("the oMLX model is API-visible but is not currently resident in memory")
+        unknowns.append(
+            "the oMLX model is API-visible but is not currently resident in memory"
+        )
 
     record = InventoryRecord(
         runtime="omlx",
@@ -75,15 +62,113 @@ def inventory_targets_from_statuses(
         logical_model_id=requested,
         artifact_format="MLX",
         quantization=None,
-        association_kind="runtime_reported_hf_source",
+        association_kind=association_kind,
         identity_attested=False,
         identity_confidence=legacy.Confidence.HIGH,
         identity_evidence=(provenance,),
         evidence=(observed, provenance),
-        unknowns=tuple(unknowns),
+        unknowns=tuple(dict.fromkeys(unknowns)),
     )
     # The model ID is an API routing identifier, not a filesystem path.
-    return (InventoryTarget(record, selected.model_id),)
+    return InventoryTarget(record, selected.model_id)
+
+
+def inventory_targets_from_statuses(
+    legacy: Any,
+    requested_logical_model_id: str,
+    statuses: Sequence[OmlxModelStatus],
+    download_records: Sequence[OmlxHfDownloadRecord] = (),
+) -> Tuple[InventoryTarget, ...]:
+    """Create one defensible oMLX target or fail closed.
+
+    Preferred evidence is exact ``source_repo_id`` from the detailed status API.
+    oMLX 0.6.x dashboard downloads can lose that field and appear as generic local
+    directories. For that case only, a completed Hugging Face downloader record may
+    establish provenance when the requested repository is exact and its leaf maps
+    uniquely to one API-visible local model. Display IDs alone are never accepted.
+    """
+    requested = str(requested_logical_model_id or "").strip()
+    if not requested:
+        return ()
+
+    direct_matches = tuple(
+        item
+        for item in statuses
+        if item.source_repo_id is not None
+        and item.source_repo_id.strip() == requested
+        and item.model_id.strip()
+    )
+    if direct_matches:
+        unique_ids = tuple(
+            sorted({item.model_id.strip() for item in direct_matches})
+        )
+        if len(unique_ids) != 1:
+            return ()
+        selected = next(
+            item for item in direct_matches if item.model_id.strip() == unique_ids[0]
+        )
+        return (
+            _inventory_target_for_status(
+                legacy,
+                requested,
+                selected,
+                association_kind="runtime_reported_hf_source",
+                provenance_source="oMLX model-status source repository metadata",
+                provenance_detail=(
+                    "oMLX reports an exact Hugging Face source repository match "
+                    "for the requested logical model"
+                ),
+            ),
+        )
+
+    completed_repo_ids = {
+        item.repo_id.strip()
+        for item in download_records
+        if item.status.strip().lower() == "completed" and item.repo_id.strip()
+    }
+    if requested not in completed_repo_ids:
+        return ()
+
+    requested_leaf = requested.rsplit("/", 1)[-1]
+    if not requested_leaf:
+        return ()
+    colliding_downloads = {
+        repo_id
+        for repo_id in completed_repo_ids
+        if repo_id.rsplit("/", 1)[-1] == requested_leaf
+    }
+    if colliding_downloads != {requested}:
+        return ()
+
+    fallback_matches = tuple(
+        item
+        for item in statuses
+        if item.source_repo_id is None
+        and (item.source_type or "").strip().lower() == "local"
+        and item.model_id.strip() == requested_leaf
+    )
+    unique_ids = tuple(sorted({item.model_id.strip() for item in fallback_matches}))
+    if len(unique_ids) != 1 or len(fallback_matches) != 1:
+        return ()
+
+    selected = fallback_matches[0]
+    return (
+        _inventory_target_for_status(
+            legacy,
+            requested,
+            selected,
+            association_kind="runtime_reported_hf_download",
+            provenance_source="oMLX completed Hugging Face download registry",
+            provenance_detail=(
+                "oMLX reports a completed download for the requested Hugging Face "
+                "repository and the API-visible local model ID is its unique "
+                "repository leaf"
+            ),
+            extra_unknowns=(
+                "model-status source repository metadata is unavailable; association uses completed-download provenance",
+            ),
+        ),
+    )
 
 
 def observe_omlx_inventory(
@@ -92,14 +177,32 @@ def observe_omlx_inventory(
     *,
     base_url: str = DEFAULT_OMLX_BASE_URL,
 ) -> Tuple[InventoryTarget, ...]:
-    """Observe exact-provenance oMLX inventory without filesystem access."""
+    """Observe exact or defensible oMLX provenance without filesystem access."""
     if OmlxRuntimeAdapter._cli_path() is None:
         return ()
     try:
         statuses = list_model_statuses(base_url=base_url)
     except OmlxApiError:
         return ()
-    return inventory_targets_from_statuses(legacy, requested_logical_model_id, statuses)
+
+    direct = inventory_targets_from_statuses(
+        legacy,
+        requested_logical_model_id,
+        statuses,
+    )
+    if direct:
+        return direct
+
+    try:
+        download_records = list_hf_download_records(base_url=base_url)
+    except OmlxApiError:
+        return ()
+    return inventory_targets_from_statuses(
+        legacy,
+        requested_logical_model_id,
+        statuses,
+        download_records,
+    )
 
 
 class OmlxExecutionAdapter:
@@ -142,7 +245,9 @@ class OmlxExecutionAdapter:
             except (OmlxApiError, ValueError) as error:
                 raise RuntimeError("oMLX measured execution failed") from error
             if measurement.model_id != model_id:
-                raise RuntimeError("oMLX response model identity did not match the requested API model id")
+                raise RuntimeError(
+                    "oMLX response model identity did not match the requested API model id"
+                )
             if index < workload.warmup_runs:
                 continue
             if measurement.completion_tokens is None or measurement.completion_tokens <= 0:
