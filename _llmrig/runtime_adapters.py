@@ -1,11 +1,13 @@
 """Runtime adapter foundation for LLMRig v0.8.
 
-The current public CLI still owns the stable behavior in :mod:`llmrig`.  This
+The current public CLI still owns the stable behavior in :mod:`llmrig`. This
 module introduces a deliberately small, stdlib-only adapter boundary that can be
 adopted incrementally without changing existing solve semantics.
 
 Probes are observational only: they never install software, start services,
-download models, or execute model weights.
+download models, or execute model weights. Runtime-specific readiness and LLMRig
+support facts live on the adapter-produced probe so downstream bridges do not need
+to rediscover behavior from runtime names.
 """
 
 from __future__ import annotations
@@ -33,7 +35,7 @@ class RuntimeEvidence:
 
 @dataclass(frozen=True)
 class RuntimeProbe:
-    """Read-only observation of one runtime on the current machine."""
+    """Read-only observation and capability contract for one local runtime."""
 
     runtime: str
     installed: bool
@@ -44,6 +46,11 @@ class RuntimeProbe:
     supported_platforms: Tuple[str, ...]
     supported_architectures: Tuple[str, ...]
     execution_api: Optional[str]
+    availability_policy: str = "local"
+    runtime_execution_capable: bool = True
+    llmrig_installation_supported: bool = False
+    llmrig_execution_supported: bool = False
+    llmrig_benchmark_supported: bool = False
     evidence: Tuple[RuntimeEvidence, ...] = ()
     blockers: Tuple[str, ...] = ()
     unknowns: Tuple[str, ...] = ()
@@ -53,6 +60,19 @@ class RuntimeProbe:
         if not self.installed or self.blockers:
             return False
         return self.service_available is not False
+
+    @property
+    def capability_available(self) -> bool:
+        """Apply the adapter-declared readiness policy without runtime-name checks."""
+        if not self.installed or self.blockers:
+            return False
+        if self.availability_policy == "service":
+            return self.service_available is True
+        if self.availability_policy == "cli-version":
+            return self.cli_path is not None and self.version is not None
+        if self.availability_policy == "local":
+            return self.locally_usable
+        return False
 
     def to_dict(self) -> dict:
         public_cli_path = (
@@ -76,9 +96,14 @@ class RuntimeProbe:
 
 
 class RuntimeAdapter(Protocol):
-    """Small observational adapter contract for local inference runtimes."""
+    """Observational adapter contract for local inference runtimes."""
 
     name: str
+    availability_policy: str
+    runtime_execution_capable: bool
+    llmrig_installation_supported: bool
+    llmrig_execution_supported: bool
+    llmrig_benchmark_supported: bool
 
     def probe(self) -> RuntimeProbe: ...
 
@@ -136,6 +161,11 @@ class OmlxRuntimeAdapter:
     """Detect oMLX without importing it or starting its server."""
 
     name = "omlx"
+    availability_policy = "service"
+    runtime_execution_capable = True
+    llmrig_installation_supported = False
+    llmrig_execution_supported = True
+    llmrig_benchmark_supported = True
     default_endpoint = os.environ.get("OMLX_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 
     @staticmethod
@@ -207,6 +237,11 @@ class OmlxRuntimeAdapter:
             supported_platforms=("Darwin",),
             supported_architectures=("arm64", "aarch64"),
             execution_api="OpenAI-compatible /v1",
+            availability_policy=self.availability_policy,
+            runtime_execution_capable=self.runtime_execution_capable,
+            llmrig_installation_supported=self.llmrig_installation_supported,
+            llmrig_execution_supported=self.llmrig_execution_supported,
+            llmrig_benchmark_supported=self.llmrig_benchmark_supported,
             evidence=tuple(evidence),
             blockers=tuple(blockers),
             unknowns=tuple(unknowns),
@@ -215,6 +250,11 @@ class OmlxRuntimeAdapter:
 
 class OllamaRuntimeAdapter:
     name = "ollama"
+    availability_policy = "service"
+    runtime_execution_capable = True
+    llmrig_installation_supported = False
+    llmrig_execution_supported = True
+    llmrig_benchmark_supported = True
     default_endpoint = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 
     def probe(self) -> RuntimeProbe:
@@ -242,6 +282,11 @@ class OllamaRuntimeAdapter:
             supported_platforms=("Darwin", "Linux", "Windows"),
             supported_architectures=(),
             execution_api="Ollama HTTP API",
+            availability_policy=self.availability_policy,
+            runtime_execution_capable=self.runtime_execution_capable,
+            llmrig_installation_supported=self.llmrig_installation_supported,
+            llmrig_execution_supported=self.llmrig_execution_supported,
+            llmrig_benchmark_supported=self.llmrig_benchmark_supported,
             evidence=evidence,
             unknowns=unknowns,
         )
@@ -249,6 +294,11 @@ class OllamaRuntimeAdapter:
 
 class LlamaCppRuntimeAdapter:
     name = "llama.cpp"
+    availability_policy = "cli-version"
+    runtime_execution_capable = True
+    llmrig_installation_supported = False
+    llmrig_execution_supported = True
+    llmrig_benchmark_supported = True
 
     def probe(self) -> RuntimeProbe:
         cli_path = next(
@@ -267,6 +317,11 @@ class LlamaCppRuntimeAdapter:
             supported_platforms=("Darwin", "Linux", "Windows"),
             supported_architectures=(),
             execution_api="local CLI",
+            availability_policy=self.availability_policy,
+            runtime_execution_capable=self.runtime_execution_capable,
+            llmrig_installation_supported=self.llmrig_installation_supported,
+            llmrig_execution_supported=self.llmrig_execution_supported,
+            llmrig_benchmark_supported=self.llmrig_benchmark_supported,
             evidence=(
                 RuntimeEvidence(
                     "deterministic-runtime-knowledge",
@@ -280,6 +335,11 @@ class LlamaCppRuntimeAdapter:
 
 class MlxLmRuntimeAdapter:
     name = "mlx-lm"
+    availability_policy = "cli-version"
+    runtime_execution_capable = True
+    llmrig_installation_supported = False
+    llmrig_execution_supported = True
+    llmrig_benchmark_supported = True
 
     def probe(self) -> RuntimeProbe:
         try:
@@ -313,6 +373,11 @@ class MlxLmRuntimeAdapter:
             supported_platforms=("Darwin",),
             supported_architectures=("arm64", "aarch64"),
             execution_api="local CLI",
+            availability_policy=self.availability_policy,
+            runtime_execution_capable=self.runtime_execution_capable,
+            llmrig_installation_supported=self.llmrig_installation_supported,
+            llmrig_execution_supported=self.llmrig_execution_supported,
+            llmrig_benchmark_supported=self.llmrig_benchmark_supported,
             evidence=(
                 RuntimeEvidence(
                     "deterministic-runtime-knowledge",
