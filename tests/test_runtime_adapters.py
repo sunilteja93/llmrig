@@ -10,6 +10,7 @@ from _llmrig.runtime_adapters import (
     OmlxRuntimeAdapter,
     OllamaRuntimeAdapter,
     RuntimeProbe,
+    build_execution_adapters,
     probe_runtimes,
 )
 
@@ -205,6 +206,37 @@ class RuntimeProbeTests(unittest.TestCase):
 
         probes = probe_runtimes((Adapter("a"), Adapter("b")))
         self.assertEqual([item.runtime for item in probes], ["a", "b"])
+
+    def test_execution_adapters_follow_registry_order(self) -> None:
+        class FakeExecutionAdapter:
+            def __init__(self, runtime: str) -> None:
+                self.runtime = runtime
+
+        class FakeOllamaExecutionAdapter(FakeExecutionAdapter):
+            def __init__(self, host: str) -> None:
+                self.host = host
+                super().__init__("ollama")
+
+        class FakeLlamaCppExecutionAdapter(FakeExecutionAdapter):
+            def __init__(self) -> None:
+                super().__init__("llama.cpp")
+
+        class FakeMlxExecutionAdapter(FakeExecutionAdapter):
+            def __init__(self) -> None:
+                super().__init__("mlx-lm")
+
+        class Legacy:
+            DEFAULT_OLLAMA_HOST = "http://127.0.0.1:11434"
+            OllamaExecutionAdapter = FakeOllamaExecutionAdapter
+            LlamaCppExecutionAdapter = FakeLlamaCppExecutionAdapter
+            MlxExecutionAdapter = FakeMlxExecutionAdapter
+
+        adapters = build_execution_adapters(Legacy)
+        self.assertEqual(
+            [item.runtime for item in adapters],
+            ["omlx", "ollama", "mlx-lm", "llama.cpp"],
+        )
+        self.assertEqual(adapters[1].host, Legacy.DEFAULT_OLLAMA_HOST)
 
 
 if __name__ == "__main__":
