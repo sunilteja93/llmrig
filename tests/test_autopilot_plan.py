@@ -117,6 +117,40 @@ class AutopilotPlanTests(unittest.TestCase):
             "no unique evidenced candidate is selected for apply", plan.blockers
         )
 
+    def test_minimal_change_path_breaks_setup_tie_without_performance_ranking(self):
+        payload = self.solve_payload(recommended=False)
+
+        stopped_omlx = self.candidate(
+            candidate_id="candidate-omlx-stopped",
+            runtime="omlx",
+            assessments={
+                **self.candidate()["assessments"],
+                "runtime_availability": {
+                    "state": "unavailable",
+                    "blockers": ["runtime is not currently available"],
+                    "unknowns": [],
+                },
+            },
+        )
+        ready_mlx = self.candidate(
+            candidate_id="candidate-mlx",
+            runtime="mlx-lm",
+        )
+
+        payload["candidates"] = [stopped_omlx, ready_mlx]
+
+        plan = build_autopilot_plan(payload, self.machine())
+
+        self.assertEqual(plan.selected_candidate_id, "candidate-mlx")
+        self.assertEqual(plan.recommendation_status, "setup_selected")
+        self.assertIn("fewest mutating actions", plan.recommendation_reason)
+        self.assertIn("not a performance ranking", plan.recommendation_reason)
+        self.assertFalse(plan.blocked)
+        self.assertEqual(
+            [action.kind.value for action in plan.actions],
+            ["acquire_artifact", "load_model", "verify"],
+        )
+
     def test_non_hf_missing_artifact_fails_closed_for_acquisition(self):
         candidate = self.candidate(artifact_id="artifact-without-evidenced-source")
         plan = build_autopilot_plan(

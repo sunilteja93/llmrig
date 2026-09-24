@@ -302,6 +302,11 @@ def _setup_viable(candidate: AutopilotCandidate) -> bool:
     return bool(actions) and not any(action.blockers for action in actions)
 
 
+def _setup_mutation_cost(candidate: AutopilotCandidate) -> int:
+    """Count only explicit local-state changes; verification is not a mutation."""
+    return sum(1 for action in _actions_for(candidate) if action.mutating)
+
+
 def _machine_tuple(machine: Mapping[str, Any]) -> Tuple[Tuple[str, Any], ...]:
     allowed = ("os", "arch", "cpu", "ram_gib")
     values = []
@@ -394,11 +399,32 @@ def build_autopilot_plan(
                 "This is a setup selection, not a performance ranking."
             )
         elif len(setup_candidates) > 1:
-            recommendation_status = "inconclusive"
-            recommendation_reason = (
-                "Multiple compatible Autopilot setup paths remain; LLMRig will not rank them "
-                "without additional evidence or measurement."
+            minimum_mutations = min(
+                _setup_mutation_cost(candidate)
+                for candidate in setup_candidates
             )
+            minimal_change_candidates = tuple(
+                candidate
+                for candidate in setup_candidates
+                if _setup_mutation_cost(candidate) == minimum_mutations
+            )
+
+            if len(minimal_change_candidates) == 1:
+                selected = minimal_change_candidates[0]
+                selected_candidate_id = selected.candidate_id
+                recommendation_status = "setup_selected"
+                recommendation_reason = (
+                    "Multiple compatible Autopilot setup paths exist, but exactly one "
+                    "requires the fewest mutating actions. LLMRig selected the "
+                    "minimal-change setup path. This is not a performance ranking."
+                )
+            else:
+                recommendation_status = "inconclusive"
+                recommendation_reason = (
+                    "Multiple compatible Autopilot setup paths remain with equal "
+                    "minimal-change cost; LLMRig will not rank them without additional "
+                    "evidence or measurement."
+                )
         else:
             recommendation_status = "inconclusive"
 
