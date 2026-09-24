@@ -12,6 +12,7 @@ import json
 import sys
 from typing import Optional, Sequence
 
+from .omlx_verify import omlx_verify_for_legacy
 from .runtime_adapters import RuntimeProbe, probe_runtimes
 from .runtime_bridge import adapter_capabilities_for_legacy
 
@@ -155,9 +156,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if values and values[0] == "solve":
         # Keep the established solve implementation and schema, but feed its
-        # runtime capability reads from the v0.8 adapter registry. The bridge is
-        # scoped to this call so unrelated legacy commands retain current behavior.
-        with adapter_capabilities_for_legacy(legacy):
+        # capability, inventory, and explicit verification boundaries from the
+        # v0.8 adapter layer. These patches exist only for this command call.
+        with adapter_capabilities_for_legacy(legacy), omlx_verify_for_legacy(legacy):
             return legacy.main(values)
 
     return legacy.main(values)

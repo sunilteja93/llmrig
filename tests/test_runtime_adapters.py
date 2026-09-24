@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
+from _llmrig.privacy import validate_public_text
 from _llmrig.runtime_adapters import (
     LlamaCppRuntimeAdapter,
     MlxLmRuntimeAdapter,
@@ -64,6 +65,34 @@ class RuntimeProbeTests(unittest.TestCase):
         self.assertIn("MLX", probe.supported_artifact_formats)
         self.assertEqual(probe.execution_api, "OpenAI-compatible /v1")
         self.assertFalse(probe.blockers)
+        self.assertIn("oMLX model inventory API", [item.source for item in probe.evidence])
+        for item in probe.evidence:
+            validate_public_text(item.kind, "runtime evidence kind")
+            validate_public_text(item.source, "runtime evidence source")
+            validate_public_text(item.detail, "runtime evidence detail")
+
+    @mock.patch.dict("os.environ", {"OMLX_API_KEY": "test-secret"}, clear=False)
+    @mock.patch("_llmrig.runtime_adapters._json_endpoint_alive", return_value=True)
+    @mock.patch("_llmrig.runtime_adapters._run_version", return_value="omlx 1.2.3")
+    @mock.patch.object(OmlxRuntimeAdapter, "_cli_path", return_value="/usr/local/bin/omlx")
+    @mock.patch("_llmrig.runtime_adapters.platform.machine", return_value="arm64")
+    @mock.patch("_llmrig.runtime_adapters.platform.system", return_value="Darwin")
+    def test_omlx_probe_uses_configured_api_key_without_exposing_it(
+        self,
+        _system: mock.Mock,
+        _machine: mock.Mock,
+        _cli: mock.Mock,
+        _version: mock.Mock,
+        _alive: mock.Mock,
+    ) -> None:
+        probe = OmlxRuntimeAdapter().probe()
+        _alive.assert_called_once_with(
+            "http://127.0.0.1:8000/v1/models",
+            headers={"Authorization": "Bearer test-secret"},
+        )
+        self.assertTrue(probe.service_available)
+        self.assertNotIn("test-secret", repr(probe))
+        self.assertNotIn("test-secret", str(probe.to_dict()))
 
     @mock.patch("_llmrig.runtime_adapters._json_endpoint_alive", return_value=False)
     @mock.patch("_llmrig.runtime_adapters._run_version", return_value="omlx 1.2.3")

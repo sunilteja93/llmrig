@@ -72,10 +72,22 @@ llmrig runtimes --json
 ```
 
 The v0.8 CLI `solve` path consumes those adapter observations when matching resolved
-artifacts to runtime candidates. oMLX is currently surfaced as an MLX-capable runtime
-path without treating installation as model availability. LLMRig does not yet claim
-oMLX execution or benchmark support; that remains a separate measured-integration
-step. Generic `safetensors` files do not imply MLX/oMLX compatibility.
+artifacts to runtime candidates. For oMLX, installation is still separate from local
+model availability: LLMRig only associates an API-visible local model with an exact
+Hugging Face logical model when oMLX exposes exact source metadata or when its
+completed Hugging Face download registry provides an exact, unambiguous repository
+association. Display names alone are not provenance, and LLMRig does not scan
+arbitrary model directories.
+
+With that provenance established, `solve --verify` can execute an already-local
+oMLX model through its OpenAI-compatible `/v1/completions` API. LLMRig prefers
+oMLX server-reported prompt/generation timing and throughput metrics when present.
+If an oMLX response exposes only server `total_time`, LLMRig records a latency-only
+measurement, leaves unavailable throughput dimensions unknown, and keeps a balanced
+recommendation inconclusive unless enough comparable measured dimensions remain.
+The `OMLX_API_KEY` environment variable is honored for authenticated local oMLX
+endpoints and is never serialized into solve output. Generic `safetensors` files do
+not imply MLX/oMLX compatibility.
 
 ## Install
 
