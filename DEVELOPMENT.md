@@ -22,30 +22,18 @@ llmrig --version
 `which llmrig` should point inside `.venv/bin/` while the environment is active.
 Do not use `--break-system-packages` for normal LLMRig development.
 
-A normal local install is the default contributor path because it exercises the
-same wheel packaging boundary users receive. After pulling source changes, rerun
-`python -m pip install .` before testing the installed command.
-
-Editable installs are useful during active implementation but are validated
-separately because PEP 660 behavior can vary across Python/pip/setuptools versions.
-If using editable mode, verify it from outside the repository before relying on it:
-
-```bash
-python -m pip install -e .
-cd ..
-python -c "import llmrig, _llmrig"
-cd llmrig
-```
-
-For the v0.8 runtime-intelligence work, a useful smoke test is:
+For the v0.8 runtime-intelligence work, useful smoke tests are:
 
 ```bash
 llmrig runtimes
 llmrig runtimes --json
+llmrig solve mlx-community/Qwen3.5-27B-4bit --json
 ```
 
-The runtime probe is observational only. It does not install runtimes, start
-services, download models, or execute model weights.
+The runtime probe and default solve path are observational only. They do not install
+runtimes, start services, download model weights, or execute inference. The solve
+smoke test resolves Hugging Face metadata only; an oMLX/MLX runtime candidate does
+not imply that the model is already local or measurable.
 
 Run the project checks before pushing changes:
 
