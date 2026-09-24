@@ -39,7 +39,7 @@ class RuntimeBridgeTests(unittest.TestCase):
             unknowns=unknowns,
         )
 
-    def test_omlx_service_is_runtime_available_but_not_yet_llmrig_measurable(self):
+    def test_omlx_service_is_runtime_available_and_llmrig_measurable(self):
         probe = self.probe(
             "omlx",
             installed=True,
@@ -56,8 +56,8 @@ class RuntimeBridgeTests(unittest.TestCase):
         self.assertTrue(capability.installed)
         self.assertTrue(capability.available)
         self.assertTrue(capability.runtime_execution_capable)
-        self.assertFalse(capability.llmrig_execution_supported)
-        self.assertFalse(capability.llmrig_benchmark_supported)
+        self.assertTrue(capability.llmrig_execution_supported)
+        self.assertTrue(capability.llmrig_benchmark_supported)
         self.assertEqual(capability.supported_artifact_formats, ("MLX",))
 
     def test_installed_omlx_without_service_is_not_available(self):
@@ -74,6 +74,8 @@ class RuntimeBridgeTests(unittest.TestCase):
         capability = runtime_bridge.capabilities_from_probes(llmrig, {}, (probe,))[0]
         self.assertTrue(capability.installed)
         self.assertFalse(capability.available)
+        self.assertTrue(capability.llmrig_execution_supported)
+        self.assertTrue(capability.llmrig_benchmark_supported)
         self.assertIn("service is not responding", " ".join(capability.unknowns))
 
     def test_native_cli_requires_version_evidence_for_availability(self):
