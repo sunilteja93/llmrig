@@ -116,6 +116,47 @@ class AutopilotPlanTests(unittest.TestCase):
             acquire.blockers,
         )
 
+    def test_ollama_runtime_native_acquisition_is_evidenced(self):
+        candidate = self.candidate(
+            candidate_id="candidate-ollama",
+            artifact_id="qwen3:8b",
+            runtime="ollama",
+            artifact_format="Ollama",
+        )
+        plan = build_autopilot_plan(
+            self.solve_payload(candidate=candidate), self.machine()
+        )
+
+        self.assertFalse(plan.blocked)
+        acquire = plan.actions[0]
+        self.assertEqual(acquire.kind.value, "acquire_artifact")
+        self.assertEqual(acquire.blockers, ())
+        self.assertIn("runtime-native", acquire.evidence[0])
+
+    def test_unavailable_cli_runtime_fails_closed_instead_of_inventing_start(self):
+        candidate = self.candidate(
+            candidate_id="candidate-mlx",
+            runtime="mlx-lm",
+            assessments={
+                **self.candidate()["assessments"],
+                "runtime_availability": {
+                    "state": "unavailable",
+                    "blockers": ["runtime is not currently available"],
+                    "unknowns": [],
+                },
+            },
+        )
+        plan = build_autopilot_plan(
+            self.solve_payload(candidate=candidate), self.machine()
+        )
+
+        start = next(action for action in plan.actions if action.kind.value == "start_runtime")
+        self.assertIn(
+            "no automatic start path",
+            start.blockers[0],
+        )
+        self.assertTrue(plan.blocked)
+
     def test_private_artifact_path_is_rejected(self):
         candidate = self.candidate(artifact_id="/Users/private/model.gguf")
         with self.assertRaises(ValueError):
