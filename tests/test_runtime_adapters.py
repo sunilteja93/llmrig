@@ -28,6 +28,7 @@ class RuntimeProbeTests(unittest.TestCase):
             execution_api=None,
         )
         self.assertTrue(probe.locally_usable)
+        self.assertTrue(probe.capability_available)
         self.assertFalse(
             RuntimeProbe(
                 runtime="test",
@@ -42,6 +43,21 @@ class RuntimeProbeTests(unittest.TestCase):
                 blockers=("blocked",),
             ).locally_usable
         )
+
+    def test_unknown_availability_policy_fails_closed(self) -> None:
+        probe = RuntimeProbe(
+            runtime="test",
+            installed=True,
+            service_available=True,
+            version="1",
+            cli_path="/tmp/test",
+            supported_artifact_formats=(),
+            supported_platforms=(),
+            supported_architectures=(),
+            execution_api=None,
+            availability_policy="unsupported-policy",
+        )
+        self.assertFalse(probe.capability_available)
 
     @mock.patch("_llmrig.runtime_adapters._json_endpoint_alive", return_value=True)
     @mock.patch("_llmrig.runtime_adapters._run_version", return_value="omlx 1.2.3")
@@ -61,6 +77,10 @@ class RuntimeProbeTests(unittest.TestCase):
         self.assertTrue(probe.installed)
         self.assertTrue(probe.service_available)
         self.assertTrue(probe.locally_usable)
+        self.assertTrue(probe.capability_available)
+        self.assertEqual(probe.availability_policy, "service")
+        self.assertTrue(probe.llmrig_execution_supported)
+        self.assertTrue(probe.llmrig_benchmark_supported)
         self.assertEqual(probe.version, "omlx 1.2.3")
         self.assertIn("MLX", probe.supported_artifact_formats)
         self.assertEqual(probe.execution_api, "OpenAI-compatible /v1")
@@ -110,6 +130,7 @@ class RuntimeProbeTests(unittest.TestCase):
         probe = OmlxRuntimeAdapter().probe()
         self.assertTrue(probe.installed)
         self.assertFalse(probe.locally_usable)
+        self.assertFalse(probe.capability_available)
         self.assertIn("oMLX requires macOS", probe.blockers)
         self.assertIn("oMLX requires Apple Silicon", probe.blockers)
 
@@ -121,6 +142,10 @@ class RuntimeProbeTests(unittest.TestCase):
         probe = OllamaRuntimeAdapter().probe()
         self.assertFalse(probe.installed)
         self.assertFalse(probe.locally_usable)
+        self.assertFalse(probe.capability_available)
+        self.assertEqual(probe.availability_policy, "service")
+        self.assertTrue(probe.llmrig_execution_supported)
+        self.assertTrue(probe.llmrig_benchmark_supported)
 
     @mock.patch("_llmrig.runtime_adapters._run_version", return_value="version 1")
     @mock.patch(
@@ -132,6 +157,10 @@ class RuntimeProbeTests(unittest.TestCase):
     ) -> None:
         probe = LlamaCppRuntimeAdapter().probe()
         self.assertTrue(probe.installed)
+        self.assertTrue(probe.capability_available)
+        self.assertEqual(probe.availability_policy, "cli-version")
+        self.assertTrue(probe.llmrig_execution_supported)
+        self.assertTrue(probe.llmrig_benchmark_supported)
         self.assertEqual(probe.supported_artifact_formats, ("GGUF",))
 
     @mock.patch("_llmrig.runtime_adapters.platform.machine", return_value="arm64")
@@ -150,6 +179,10 @@ class RuntimeProbeTests(unittest.TestCase):
         probe = MlxLmRuntimeAdapter().probe()
         self.assertTrue(probe.installed)
         self.assertTrue(probe.locally_usable)
+        self.assertTrue(probe.capability_available)
+        self.assertEqual(probe.availability_policy, "cli-version")
+        self.assertTrue(probe.llmrig_execution_supported)
+        self.assertTrue(probe.llmrig_benchmark_supported)
         self.assertEqual(probe.version, "0.32.0")
 
     def test_probe_runtimes_preserves_adapter_order(self) -> None:
