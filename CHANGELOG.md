@@ -2,6 +2,60 @@
 
 All notable changes to LLMRig will be documented here.
 
+## 0.8.0 - 2026-09-24
+
+### Runtime intelligence
+
+- Add `llmrig runtimes` and `llmrig runtimes --json` for read-only inspection of
+  oMLX, Ollama, MLX-LM, and llama.cpp installation, readiness, formats,
+  interfaces, blockers, and unknowns.
+- Unify runtime readiness, capability, and verification routing behind the v0.8
+  runtime-adapter registry instead of duplicating runtime-specific support tables.
+- Keep probing read-only: LLMRig does not install runtimes, start services,
+  download model weights, or scan arbitrary filesystem locations.
+
+### oMLX
+
+- Add first-class authenticated oMLX observation and execution through its
+  OpenAI-compatible local API, honoring `OMLX_API_KEY` without serializing
+  credentials into public output.
+- Associate an API-visible oMLX model with an exact Hugging Face repository only
+  from defensible provenance: exact runtime source metadata, or an exact and
+  unambiguous completed oMLX Hugging Face download record.
+- Join provenance-backed local oMLX inventory with the canonical resolved MLX
+  candidate while keeping the private runtime model locator out of public output.
+- Extend `solve --verify` to measure already-local oMLX candidates with `race-v2`.
+  Prefer server-reported per-phase timing and throughput; when oMLX reports only
+  server `total_time`, record latency only and leave unavailable throughput
+  dimensions unknown instead of synthesizing values.
+
+### Hugging Face evidence hardening
+
+- Harden exact Hub artifact classification for GGUF, MLX, and generic
+  safetensors without turning discovery metadata into installation trust.
+- Keep an `mlx` tag or path hint by itself as a hint, not proof of MLX packaging.
+  Promote safetensors packaging to MLX only from stronger structured evidence,
+  such as explicit `library_name=mlx` or an MLX hint backed by the MLX-LM
+  quantization contract.
+- Preserve 4-bit and context metadata from exact repository configuration when
+  the model API omits needed structured fields, without downloading weights.
+- Fail closed on conflicting context, quantization, base-model provenance, or
+  incomplete/ambiguous safetensors shard sets.
+- Keep generic safetensors runtime compatibility unknown unless stronger
+  evidence exists.
+
+### Evidence, privacy, and reliability
+
+- Preserve the evidence invariants: unknown is not false; compatible is not
+  local; local is not executable; executable is not measurable; measurable is
+  not measured; measured performance is not model quality.
+- Keep private filesystem paths, API keys, session cookies, and private execution
+  locators out of public solve and runtime output.
+- Preserve deterministic, privacy-safe solve schemas while expanding runtime and
+  Hub evidence behind the existing CLI and SDK surfaces.
+- Validate the release across macOS, Linux, and Windows on Python 3.9 and 3.14,
+  including wheel/sdist installation and CodeQL checks.
+
 ## 0.7.0 - 2026-09-06
 
 ### Added

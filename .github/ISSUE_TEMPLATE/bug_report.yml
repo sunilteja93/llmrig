@@ -11,7 +11,7 @@ body:
     attributes:
       label: LLMRig version
       description: Run `llmrig --version` if possible.
-      placeholder: "0.7.0"
+      placeholder: "Paste the output of llmrig --version"
     validations:
       required: true
   - type: input
