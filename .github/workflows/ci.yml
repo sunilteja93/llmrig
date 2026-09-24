@@ -85,20 +85,25 @@ jobs:
           sdists = glob.glob("dist/*.tar.gz")
           assert len(wheels) == 1, wheels
           assert len(sdists) == 1, sdists
+          required = {
+              "llmrig.py",
+              "_llmrig/__init__.py",
+              "_llmrig/solve.py",
+              "_llmrig/cli.py",
+              "_llmrig/runtime_adapters.py",
+              "_llmrig/hf_artifacts.py",
+              "_llmrig/hf_bridge.py",
+              "_llmrig/omlx_api.py",
+              "_llmrig/omlx_verify.py",
+          }
           with zipfile.ZipFile(wheels[0]) as archive:
               names = set(archive.namelist())
-              assert "llmrig.py" in names
-              assert "_llmrig/__init__.py" in names
-              assert "_llmrig/solve.py" in names
-              assert "_llmrig/cli.py" in names
-              assert "_llmrig/runtime_adapters.py" in names
+              missing = required - names
+              assert not missing, missing
           with tarfile.open(sdists[0]) as archive:
               names = {name.split("/", 1)[-1] for name in archive.getnames()}
-              assert "llmrig.py" in names
-              assert "_llmrig/__init__.py" in names
-              assert "_llmrig/solve.py" in names
-              assert "_llmrig/cli.py" in names
-              assert "_llmrig/runtime_adapters.py" in names
+              missing = required - names
+              assert not missing, missing
               assert "pyproject.toml" in names
           PY
 
@@ -113,8 +118,7 @@ jobs:
           import _llmrig
           import llmrig
 
-          assert llmrig.VERSION == "0.7.0"
-          assert importlib.metadata.version("llmrig") == "0.7.0"
+          assert llmrig.VERSION == importlib.metadata.version("llmrig")
           assert not (importlib.metadata.requires("llmrig") or [])
           result = llmrig.solve("qwen3:0.6b")
           assert isinstance(result, llmrig.SolveResult)
@@ -131,7 +135,7 @@ jobs:
           "$RUNNER_TEMP/llmrig-sdist/bin/python" -m pip install --upgrade pip setuptools
           "$RUNNER_TEMP/llmrig-sdist/bin/python" -m pip install --no-deps dist/*.tar.gz
           cd "$RUNNER_TEMP"
-          "$RUNNER_TEMP/llmrig-sdist/bin/python" -c "import llmrig, _llmrig; assert llmrig.VERSION == '0.7.0'"
+          "$RUNNER_TEMP/llmrig-sdist/bin/python" -c "import importlib.metadata, llmrig, _llmrig; assert llmrig.VERSION == importlib.metadata.version('llmrig')"
 
       - name: Install editable source and smoke-test outside checkout
         shell: bash
@@ -140,7 +144,7 @@ jobs:
           "$RUNNER_TEMP/llmrig-editable/bin/python" -m pip install --upgrade pip setuptools
           "$RUNNER_TEMP/llmrig-editable/bin/python" -m pip install --editable "$GITHUB_WORKSPACE"
           cd "$RUNNER_TEMP"
-          "$RUNNER_TEMP/llmrig-editable/bin/python" -c "import llmrig, _llmrig; assert llmrig.VERSION == '0.7.0'"
+          "$RUNNER_TEMP/llmrig-editable/bin/python" -c "import importlib.metadata, llmrig, _llmrig; assert llmrig.VERSION == importlib.metadata.version('llmrig')"
           "$RUNNER_TEMP/llmrig-editable/bin/llmrig" runtimes --json >/dev/null
 
   ci-success:
