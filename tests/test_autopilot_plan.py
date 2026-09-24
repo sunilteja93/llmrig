@@ -146,7 +146,7 @@ class AutopilotPlanTests(unittest.TestCase):
         acquire = plan.actions[0]
         self.assertEqual(acquire.kind.value, "acquire_artifact")
         self.assertEqual(acquire.blockers, ())
-        self.assertIn("runtime-native", acquire.evidence[0])
+        self.assertIn("native acquisition", acquire.evidence[0])
 
     def test_unavailable_cli_runtime_fails_closed_instead_of_inventing_start(self):
         candidate = self.candidate(
