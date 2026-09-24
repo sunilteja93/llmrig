@@ -133,7 +133,8 @@ class AutopilotFoundationTests(unittest.TestCase):
         )[0]
         self.assertIn('py-modules = ["llmrig"]', setuptools)
         self.assertIn('packages = ["_llmrig"]', setuptools)
-        self.assertIn('llmrig = "llmrig:main"', project)
+        self.assertIn('llmrig = "_llmrig.cli:main"', project)
+        self.assertEqual(Path(llmrig.__file__).name, "llmrig.py")
 
     def test_imports_do_not_probe_hardware_network_or_runtimes(self):
         root = Path(__file__).resolve().parents[1]
@@ -356,6 +357,7 @@ with mock.patch('subprocess.run') as run, \\
         for relative in (
             "llmrig.py",
             "_llmrig/__init__.py",
+            "_llmrig/cli.py",
             "_llmrig/inventory.py",
             "_llmrig/planning.py",
             "_llmrig/privacy.py",
