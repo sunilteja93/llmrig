@@ -2,7 +2,7 @@
 
 <p align="center"><strong>Stop guessing how to run local models.</strong></p>
 
-<p align="center">LLMRig is an evidence-driven Autopilot for local AI. Give it a model and a machine: it inspects the available evidence, builds a deterministic local execution plan, and tells you what is known, blocked, or unknown before changing anything. Approve a supported plan and LLMRig can apply the setup, verify the result, and record a privacy-safe receipt.</p>
+<p align="center">LLMRig is an evidence-driven Autopilot for local AI. Give it a model and a machine to see what is known, blocked, or unknown before you approve setup and verification.</p>
 
 <p align="center">
   <a href="https://github.com/sunilteja93/llmrig/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/sunilteja93/llmrig/actions/workflows/ci.yml/badge.svg"></a>
@@ -92,21 +92,18 @@ llmrig run MODEL             # approve → apply → verify
 
 ## Measured, not guessed
 
-Planning evidence and measured performance are separate facts.
+Planning evidence and measured performance are separate facts. Before verification, unavailable performance stays `unknown`.
 
-Before verification, unavailable performance stays `unknown`. When a supported run is actually verified, LLMRig records the measured result in a privacy-safe receipt containing the model, artifact, runtime, configuration, workload version, and observed metrics.
+These are real v0.9 Apple Silicon observations recorded by LLMRig's `race-v2` verification workload:
 
-```text
-Receipt: receipt-...
-Status:  completed
-Verification:
-  method_version: race-v2
-  generation_tps: <measured value>
-  prompt_eval_tps: <measured value>
-  measured_runs: 2
-```
+| Machine | Model | Runtime | Quant | Generation tok/s | Prompt tok/s | Latency |
+|---|---|---|---|---:|---:|---:|
+| Apple M4 Max · 48 GiB | `mlx-community/Qwen3-0.6B-4bit` | MLX-LM | 4-bit | 560.85 | 1629.77 | 0.2639 s |
+| Apple M4 Max · 48 GiB | `mlx-community/Qwen3-0.6B-4bit` | MLX-LM | 4-bit | 560.23 | 1687.91 | 0.2630 s |
 
-Public, privacy-safe examples from the v0.9 Apple Silicon smoke are available in the [Benchmark Passports dataset](https://huggingface.co/datasets/sunilvadlamani/llmrig-benchmark-passports). Performance measurements are evidence about that exact configuration and workload; they are not claims about model quality.
+Both rows are genuine measured observations from the same model/runtime/hardware setup, with two measured runs per observation. The first observation predates context-token persistence, so LLMRig does not backfill the missing context value.
+
+More privacy-safe measurements are available in the [Benchmark Passports dataset](https://huggingface.co/datasets/sunilvadlamani/llmrig-benchmark-passports). These numbers describe those exact measured executions; they are not a leaderboard or a claim about model quality.
 
 ## The Autopilot flow
 

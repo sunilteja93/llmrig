@@ -2,6 +2,18 @@
 
 All notable changes to LLMRig will be documented here.
 
+
+## 0.9.2 - 2026-09-25
+
+### Documentation / Release
+
+- Tighten the README opening so new users can understand LLMRig's role faster.
+- Add real v0.9 Apple Silicon verification measurements from the public
+  Benchmark Passports evidence instead of placeholder benchmark values.
+- Republish the improved README as the PyPI long description.
+- No runtime, planning, execution, verification, RigGraph, or benchmark
+  behavior changes.
+
 ## 0.9.1 - 2026-09-24
 
 ### Release / Documentation
