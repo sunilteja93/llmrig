@@ -1,8 +1,8 @@
 <h1 align="center">LLMRig</h1>
 
-<p align="center"><strong>Autopilot for local AI.</strong></p>
+<p align="center"><strong>Stop guessing how to run local models.</strong></p>
 
-<p align="center">Give LLMRig a model and a machine. It plans the evidenced local execution path, changes nothing without permission, applies the approved setup, verifies reality, and records what happened.</p>
+<p align="center">LLMRig is an evidence-driven Autopilot for local AI. Give it a model and a machine: it inspects the available evidence, builds a deterministic local execution plan, and tells you what is known, blocked, or unknown before changing anything. Approve a supported plan and LLMRig can apply the setup, verify the result, and record a privacy-safe receipt.</p>
 
 <p align="center">
   <a href="https://github.com/sunilteja93/llmrig/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/sunilteja93/llmrig/actions/workflows/ci.yml/badge.svg"></a>
@@ -15,20 +15,58 @@
   <img src="https://raw.githubusercontent.com/sunilteja93/llmrig/main/assets/llmrig-terminal.svg" alt="LLMRig runtime intelligence and evidence-driven local AI flow" width="100%" />
 </p>
 
-LLMRig sits above local inference runtimes. **oMLX, Ollama, MLX-LM, and llama.cpp are execution paths; LLMRig decides what the current evidence supports for this model on this machine.**
+## See it in 30 seconds
 
-## Hugging Face
+```bash
+pipx install llmrig
+llmrig plan mlx-community/Qwen3.5-27B-4bit
+```
 
-Explore the public v0.9 launch assets on Hugging Face:
+Representative output:
 
-- [LLMRig Autopilot Space](https://huggingface.co/spaces/sunilvadlamani/llmrig-autopilot) — static, evidence-first walkthrough of the Autopilot flow
-- [Benchmark Passports dataset](https://huggingface.co/datasets/sunilvadlamani/llmrig-benchmark-passports) — privacy-safe RigGraph measurement samples from the v0.9 Apple Silicon smoke
-- [LLMRig collection](https://huggingface.co/collections/sunilvadlamani/llmrig-autopilot-for-local-ai-6ab56f4bc732154111d04d9b) — Space, dataset, and referenced model grouped together
-- [Launch discussion](https://huggingface.co/spaces/sunilvadlamani/llmrig-autopilot/discussions/1) — reproducible v0.9 launch notes and evidence
+```text
+LLMRig Autopilot Plan
+=====================
+Machine: Apple M4 Max · 48 GiB
+Model:   mlx-community/Qwen3.5-27B-4bit
 
-The Space is intentionally a static explainer: it does **not** inspect a visitor's machine or pretend cloud execution can infer local compatibility. Run LLMRig locally for real discovery, planning, execution, and verification.
+Runtime       Format   Quant    Local      Executable
+------------  -------  -------  ---------  ------------
+omlx          MLX      4-bit    unknown    not_executable
+mlx-lm        MLX      4-bit    unknown    not_executable
 
-It deliberately keeps facts separate:
+Setup path: omlx · MLX
+Reason: exactly one compatible candidate has a complete, supported
+Autopilot setup path. This is a setup selection, not a performance ranking.
+
+Planned actions
+1. Acquire the selected artifact
+2. Prepare the selected runtime
+3. Load/register the artifact
+4. Verify with LLMRig's deterministic workload
+
+No action has been taken.
+```
+
+`plan` is read-only. If the evidence is insufficient, LLMRig stays inconclusive instead of inventing a winner.
+
+Ready to continue? Run the workflow and approve any mutation explicitly:
+
+```bash
+llmrig run mlx-community/Qwen3.5-27B-4bit
+```
+
+## Why LLMRig
+
+Running models locally still involves too much guesswork:
+
+- Large weights can be downloaded before you discover the intended setup is not viable on your machine.
+- Runtime, format, context, and quantization advice is fragmented across model cards, forums, and machine-specific anecdotes.
+- oMLX, Ollama, MLX-LM, and llama.cpp expose different artifacts and capabilities, so a model name alone is not an execution plan.
+
+**Ollama runs models. LLMRig sits above runtimes and determines what the current evidence supports for this model on this machine** — then, with approval, it can apply the supported setup and verify what actually happened.
+
+And when the evidence is not there, LLMRig says `unknown` instead of converting absence into certainty:
 
 ```text
 unknown != false
@@ -41,7 +79,38 @@ measured performance != model quality
 discovery metadata != installation trust
 ```
 
-## The v0.9 Autopilot flow
+## Quickstart
+
+```bash
+pipx install llmrig          # or: python -m pip install llmrig
+llmrig solve MODEL           # inspect evidence; change nothing
+llmrig plan MODEL            # build a deterministic read-only plan
+llmrig run MODEL             # approve → apply → verify
+```
+
+`solve` and `plan` are read-only. Downloads, runtime starts, model loads, and other mutations require explicit approval. For non-interactive automation, use `--yes` only when that intent is deliberate.
+
+## Measured, not guessed
+
+Planning evidence and measured performance are separate facts.
+
+Before verification, unavailable performance stays `unknown`. When a supported run is actually verified, LLMRig records the measured result in a privacy-safe receipt containing the model, artifact, runtime, configuration, workload version, and observed metrics.
+
+```text
+Receipt: receipt-...
+Status:  completed
+Verification:
+  method_version: race-v2
+  generation_tps: <measured value>
+  prompt_eval_tps: <measured value>
+  measured_runs: 2
+```
+
+Public, privacy-safe examples from the v0.9 Apple Silicon smoke are available in the [Benchmark Passports dataset](https://huggingface.co/datasets/sunilvadlamani/llmrig-benchmark-passports). Performance measurements are evidence about that exact configuration and workload; they are not claims about model quality.
+
+## The Autopilot flow
+
+Four commands, one principle: **explicit intent at every mutation boundary.**
 
 ### 1. Plan — read only
 
@@ -49,128 +118,42 @@ discovery metadata != installation trust
 llmrig plan mlx-community/Qwen3.5-27B-4bit
 ```
 
-A plan can include:
+Produces a deterministic plan ID covering machine identity, viable runtime/artifact candidates, required actions, blockers, and a verification step defined *before* anything changes. Downloads nothing, starts nothing.
 
-- machine and exact model identity
-- viable runtime/artifact candidates
-- artifact format, quantization, and context evidence
-- required acquisition/runtime/model-load actions
-- blockers and unknowns
-- a verification step defined **before** mutation
-- a deterministic plan ID
-
-`plan` performs no artifact download, runtime start, model load, or inference.
-
-Example shape:
-
-```text
-LLMRig Autopilot Plan
-=====================
-Plan:    plan-...
-Machine: Apple M4 Max · 48 GiB
-Model:   mlx-community/Qwen3.5-27B-4bit
-
-Runtime       Format          Quant         Local         Executable
-------------  --------------  ------------  ------------  ------------
-omlx          MLX             4-bit         not_available not_executable
-mlx-lm        MLX             4-bit         not_available not_executable
-
-Setup path: omlx · MLX
-
-Planned actions
-1. Acquire the selected artifact [changes local state]
-2. Load/register it with the runtime [changes local state]
-3. Verify with the deterministic workload [verification]
-
-No action has been taken.
-```
-
-If multiple setup paths remain valid, LLMRig stays inconclusive rather than inventing a winner.
+If several setup paths stay valid, LLMRig stays inconclusive rather than inventing a winner.
 
 ### 2. Apply — explicit intent
 
 ```bash
-llmrig apply mlx-community/Qwen3.5-27B-4bit \
-  --plan-id plan-...
+llmrig apply mlx-community/Qwen3.5-27B-4bit --plan-id plan-... --yes
 ```
 
-LLMRig recomputes the plan immediately before apply. If current evidence no longer produces the approved plan ID, apply fails closed with **plan drift detected**.
-
-Mutating actions require either interactive approval or an explicit non-interactive approval flag:
-
-```bash
-llmrig apply MODEL --plan-id plan-... --yes
-```
-
-Exact Hugging Face acquisition is pinned to the repository revision returned by the Hub. Generic discovery metadata never becomes installation trust.
-
-Approved Hugging Face acquisition uses the bundled `huggingface_hub` dependency and pins downloads to the exact repository revision resolved by the Hub.
+LLMRig recomputes the plan immediately before applying. If the evidence no longer reproduces the approved plan ID, apply fails closed with **plan drift detected**. Hugging Face downloads are pinned to the exact repository revision resolved by the Hub.
 
 ### 3. Verify — measure current reality
-
-Apply includes measured verification when the selected runtime is executable. You can also re-observe and re-verify a prior receipt:
 
 ```bash
 llmrig verify
 llmrig verify receipt-...
 ```
 
-`verify` does not trust an old success record. It recomputes current evidence, requires the exact runtime/artifact candidate to remain uniquely evidenced, refuses any mutation, and then runs the deterministic measurement workload.
-
-Unavailable metrics remain unknown. LLMRig never synthesizes missing throughput from incomparable timing data.
+Recomputes evidence from scratch, refuses any mutation, and runs the deterministic measurement workload. Old success records are never trusted; missing metrics stay `unknown` — never synthesized.
 
 ### 4. Run — the convenience workflow
-
-```bash
-llmrig run MODEL
-```
-
-`run` is the product shortcut for plan → explicit approval → apply → verify. It does **not** bypass the approval boundary. For automation, intent must still be explicit:
 
 ```bash
 llmrig run MODEL --yes
 ```
 
+Plan → approval → apply → verify in one shortcut. It does **not** bypass the approval boundary.
+
 ## Action receipts
 
-Every applied workflow produces a privacy-safe receipt containing:
+Every applied workflow emits a privacy-safe receipt: plan ID, receipt ID, model/artifact/runtime identity, actions attempted, status, verification measurements, and timestamps. Filesystem paths, API keys, cookies, and secrets are never serialized.
 
-```text
-plan ID
-receipt ID
-model / artifact / runtime identity
-actions attempted
-status and public evidence
-verification measurements
-public endpoint when applicable
-timestamps
-```
+## RigGraph — evidence that learns from reality
 
-Private filesystem locators, API keys, session cookies, and secrets are not serialized into receipts.
-
-## RigGraph — local evidence that can learn from reality
-
-Successful measured verification is persisted locally as graph-shaped evidence across:
-
-```text
-machine
-  × model
-  × artifact
-  × quantization
-  × runtime
-  × context
-  × measurement
-```
-
-Prediction and measurement are separate facts. Calibration deltas are computed only when the same metric exists on both sides.
-
-```text
-prediction: generation_tps = unknown
-measurement: generation_tps = 31.2
-calibration: generation_tps_delta = unknown
-```
-
-No anonymous/community upload occurs by default in v0.9.
+Verified measurements persist locally as graph-shaped evidence across machine × model × artifact × quantization × runtime × context × measurement. Predictions and measurements are stored as separate facts; calibration deltas are computed only when the same metric exists on both sides. No community upload happens by default.
 
 ## Runtime intelligence
 
@@ -179,8 +162,6 @@ llmrig runtimes
 llmrig runtimes --json
 ```
 
-The adapter registry currently covers:
-
 | Runtime | Readiness detection | LLMRig execution / measurement | Primary artifact evidence |
 |---|---|---|---|
 | oMLX | Yes | Yes, for provenance-backed local models | MLX |
@@ -188,70 +169,20 @@ The adapter registry currently covers:
 | MLX-LM | Yes | Yes, for explicit/evidenced local artifacts | MLX |
 | llama.cpp | Yes | Yes, for explicit/evidenced local artifacts | GGUF |
 
-Runtime probing remains read-only. Mutation support is adapter-specific and unsupported actions remain explicit blockers rather than being silently emulated.
+Runtime probing is read-only. Unsupported actions surface as explicit blockers, never silent emulation.
 
-## Solve — inspect evidence without Autopilot actions
+LLMRig resolves exact `owner/repository` identifiers through read-only Hugging Face Hub metadata (no weight downloads during resolution), with strict evidence rules — e.g. an `mlx` tag alone is not proof of MLX packaging, and conflicting context, quantization, or provenance evidence fails closed.
 
-```bash
-llmrig solve MODEL
-llmrig solve MODEL --json
-llmrig solve MODEL --context 32768
-```
+## Hugging Face
 
-`solve` constructs orthogonal evidence dimensions for each candidate:
+- [LLMRig Autopilot Space](https://huggingface.co/spaces/sunilvadlamani/llmrig-autopilot) — evidence-first walkthrough of the Autopilot flow
+- [Benchmark Passports dataset](https://huggingface.co/datasets/sunilvadlamani/llmrig-benchmark-passports) — privacy-safe RigGraph measurement samples
+- [LLMRig collection](https://huggingface.co/collections/sunilvadlamani/llmrig-autopilot-for-local-ai-6ab56f4bc732154111d04d9b) — Space, dataset, and referenced model grouped together
+- [Launch discussion](https://huggingface.co/spaces/sunilvadlamani/llmrig-autopilot/discussions/1) — reproducible launch notes and evidence
 
-```text
-discovery
-compatibility
-runtime availability
-local availability
-execution
-measurement capability
-measurement
-recommendation
-```
-
-A candidate can therefore be compatible but not local, local but not executable, executable but not measured, or measured without being recommendable.
-
-### Explicit local artifacts
-
-LLMRig does not scan arbitrary directories for native model files. Supply a locator explicitly when you want a native local artifact considered:
-
-```bash
-llmrig solve MODEL --local-artifact llama.cpp=/path/to/model.gguf
-llmrig solve MODEL --local-artifact mlx-lm=/path/to/model-directory
-```
-
-The private locator stays at the execution seam and is excluded from public solve output.
-
-## Hugging Face-native resolution
-
-Exact `owner/repository` identifiers are resolved through read-only Hub metadata. LLMRig may read the repository's small `config.json` when needed for structured format, quantization, or context evidence; it does not download weights during resolution.
-
-Evidence rules include:
-
-- `.gguf` establishes GGUF packaging; filename quantization is accepted only when exactly one recognized token is present
-- generic `.safetensors` does not itself establish MLX/oMLX compatibility
-- an `mlx` tag/path hint alone is not proof of MLX packaging
-- MLX packaging requires stronger structured evidence such as explicit `library_name=mlx` or an MLX hint backed by the MLX-LM quantization contract
-- conflicting context, quantization, provenance, or incomplete shard groupings fail closed
-
-## oMLX
-
-LLMRig can associate an API-visible oMLX model with an exact Hugging Face repository only when provenance is defensible: exact runtime source metadata, or an exact completed-download record whose mapping is unique and unambiguous.
-
-Authenticated local endpoints are supported through:
-
-```bash
-export OMLX_API_KEY="..."
-llmrig runtimes
-```
-
-The API key, admin-session cookie, filesystem model path, and private execution locator are never serialized into public results.
+The Space is intentionally a static explainer: it does **not** inspect a visitor's machine. Run LLMRig locally for real discovery, planning, execution, and verification.
 
 ## Measurement and comparison
-
-Existing measured-analysis commands remain available:
 
 | Command | Purpose |
 |---|---|
@@ -261,7 +192,7 @@ Existing measured-analysis commands remain available:
 | `optimize` | expose an unranked noise-aware Pareto frontier |
 | `bench` | full Ollama benchmark |
 
-Performance measurement does not establish model quality. Results inside the configured 5% race threshold remain inconclusive.
+Measurement never establishes model quality, and results inside the configured 5% race threshold stay inconclusive.
 
 ## Minimal Python SDK
 
@@ -271,8 +202,6 @@ import llmrig
 result = llmrig.solve("mlx-community/Qwen3.5-27B-4bit")
 print(result.plan.recommendation_status)
 ```
-
-Stable entry point:
 
 ```python
 llmrig.solve(
@@ -284,7 +213,7 @@ llmrig.solve(
 ) -> llmrig.SolveResult
 ```
 
-The SDK prints nothing and never exits the process. `SolveResult` and `SolveCandidate` are deliberate public contracts; `_llmrig` remains private implementation.
+The SDK prints nothing and never exits the process. `SolveResult` and `SolveCandidate` are the public contracts; `_llmrig` stays private.
 
 ## Installation
 
@@ -295,13 +224,7 @@ pipx install llmrig
 llmrig --version
 ```
 
-Upgrade:
-
-```bash
-pipx upgrade llmrig
-```
-
-Or use a virtual environment:
+Upgrade with `pipx upgrade llmrig`, or use a virtual environment:
 
 ```bash
 python3 -m venv .venv
@@ -317,7 +240,7 @@ python -m venv .venv
 python -m pip install llmrig
 ```
 
-LLMRig supports Python 3.9+ on macOS, Linux, and Windows. Hugging Face Hub support is included for exact, revision-pinned artifact acquisition.
+Python 3.9+ on macOS, Linux, and Windows. Hugging Face Hub support is included for exact, revision-pinned artifact acquisition.
 
 ## Architecture
 
@@ -336,9 +259,7 @@ LLMRig supports Python 3.9+ on macOS, Linux, and Windows. Hugging Face Hub suppo
    oMLX       Ollama  MLX-LM llama.cpp   future
 ```
 
-The north star is **Detect → Decide → Configure → Run → Verify**, with explicit intent at every mutation boundary.
-
-See [`ROADMAP_V1.md`](https://github.com/sunilteja93/llmrig/blob/main/ROADMAP_V1.md).
+The north star is **Detect → Decide → Configure → Run → Verify**, with explicit intent at every mutation boundary. See [`ROADMAP_V1.md`](https://github.com/sunilteja93/llmrig/blob/main/ROADMAP_V1.md).
 
 ## Project docs
 
