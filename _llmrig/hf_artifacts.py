@@ -22,6 +22,21 @@ _SAFETENSORS_SHARD_RE = re.compile(
 _GGUF_SHARD_RE = re.compile(
     r"^(.*)-(\d{5})-of-(\d{5})\.gguf$", re.I
 )
+_IMATRIX_TOKEN_RE = re.compile(
+    r"^imatrix(?:[._\-]|$)|[._\-]imatrix$", re.I
+)
+
+
+def is_imatrix_filename(path: str) -> bool:
+    """Return True for calibration imatrix files that are not runnable models."""
+    name = path.rsplit("/", 1)[-1]
+    lower = name.lower()
+    for suffix in (".gguf_file", ".gguf", ".dat"):
+        if lower.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    return _IMATRIX_TOKEN_RE.search(name) is not None
+
 _CONTEXT_KEYS = (
     "max_position_embeddings",
     "n_positions",
@@ -268,7 +283,7 @@ def gguf_weight_sets(
     by_path = {}
     for item in siblings:
         path = str(item.get("rfilename") or item.get("path") or "").strip()
-        if path.lower().endswith(".gguf"):
+        if path.lower().endswith(".gguf") and not is_imatrix_filename(path):
             by_path.setdefault(path, item)
 
     singles = []
@@ -344,6 +359,8 @@ def classify_hub_file(
     if not path:
         return None
     lower = path.lower()
+    if is_imatrix_filename(path):
+        return None
     size = sibling_size(sibling)
     evidence = []
     unknowns = []
