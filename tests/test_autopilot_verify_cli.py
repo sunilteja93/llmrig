@@ -1,4 +1,6 @@
 import argparse
+import contextlib
+import io
 import unittest
 from unittest import mock
 
@@ -76,6 +78,43 @@ class AutopilotVerifyCliTests(unittest.TestCase):
                 "quantization": "4-bit",
             },
         }
+
+    def test_print_plan_surfaces_compatibility_state(self):
+        candidate = self.candidate()
+        incompatible = AutopilotCandidate(
+            **{
+                **candidate.__dict__,
+                "compatibility": "incompatible",
+                "execution": "not_executable",
+            }
+        )
+        plan = AutopilotExecutionPlan(
+            plan_id="plan-fit",
+            model="org/model",
+            logical_model_id="org/model",
+            machine=(
+                ("os", "Darwin"),
+                ("arch", "arm64"),
+                ("cpu", "Apple M4 Max"),
+                ("ram_gib", 48.0),
+            ),
+            candidates=(incompatible,),
+            recommendation_status="inconclusive",
+            selected_candidate_id=None,
+            recommendation_reason=(
+                "All discovered model configurations exceed the conservative "
+                "model-weight budget for this machine."
+            ),
+            actions=(),
+            blockers=("no unique evidenced candidate is selected for apply",),
+        )
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            cli._print_plan(plan)
+        rendered = output.getvalue()
+        self.assertIn("Fit", rendered)
+        self.assertIn("incompatible", rendered)
+        self.assertIn("model-weight budget", rendered)
 
     def test_verify_reobserves_and_reuses_only_exact_unique_candidate(self):
         args = argparse.Namespace(receipt="latest", json=True)
