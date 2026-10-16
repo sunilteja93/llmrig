@@ -543,6 +543,73 @@ class LLMRigTests(unittest.TestCase):
             {"deterministic-inference", "verified-metadata"},
         )
 
+    def test_hf_sharded_gguf_is_one_logical_artifact_with_aggregate_size(self):
+        payload = {
+            "id": "org/beam-GGUF",
+            "pipeline_tag": "text-generation",
+            "siblings": [
+                {"rfilename": "Beam-UD-IQ1_S-00001-of-00004.gguf", "size": 25_000_000_000},
+                {"rfilename": "Beam-UD-IQ1_S-00002-of-00004.gguf", "size": 26_000_000_000},
+                {"rfilename": "Beam-UD-IQ1_S-00003-of-00004.gguf", "size": 27_000_000_000},
+                {"rfilename": "Beam-UD-IQ1_S-00004-of-00004.gguf", "size": 28_000_000_000},
+            ],
+        }
+        model = llmrig.hf_model_from_metadata("org/beam-GGUF", payload)
+        artifacts = llmrig.hf_artifacts_from_metadata(model, payload)
+
+        self.assertEqual(len(artifacts), 1)
+        artifact = artifacts[0]
+        self.assertEqual(artifact.quantization, "IQ1_S")
+        self.assertEqual(artifact.size_bytes, 106_000_000_000)
+        self.assertEqual(
+            artifact.artifact_id,
+            "hf://org/beam-GGUF/Beam-UD-IQ1_S-00001-of-00004.gguf",
+        )
+        self.assertTrue(
+            any("complete logical artifact" in item.detail for item in artifact.evidence)
+        )
+
+        resolution = llmrig.ModelResolution(
+            "resolved",
+            model,
+            artifacts,
+            llmrig.Confidence.HIGH,
+            (
+                llmrig.RecommendationEvidence(
+                    "verified-metadata",
+                    "test",
+                    "repository metadata resolved",
+                ),
+            ),
+        )
+        capability = self.runtime_capability("llama.cpp", "GGUF")
+        with mock.patch.object(llmrig, "runtime_capabilities", return_value=(capability,)):
+            result = llmrig.assess_generic_runtime_compatibility(
+                resolution, self.mac_profile()
+            )
+        self.assertFalse(result.can_run)
+        self.assertEqual(result.status, llmrig.CompatibilityStatus.TOO_LARGE)
+        self.assertEqual(result.runtime_candidates[0].fit_result, "too_large")
+
+    def test_hf_incomplete_gguf_shard_set_does_not_invent_size(self):
+        payload = {
+            "id": "org/incomplete-GGUF",
+            "siblings": [
+                {"rfilename": "model-Q4_K_XL-00001-of-00003.gguf", "size": 100},
+                {"rfilename": "model-Q4_K_XL-00003-of-00003.gguf", "size": 300},
+            ],
+        }
+        artifacts = llmrig.hf_artifacts_from_metadata(
+            llmrig.hf_model_from_metadata("org/incomplete-GGUF", payload), payload
+        )
+        self.assertEqual(len(artifacts), 1)
+        self.assertEqual(artifacts[0].quantization, "Q4_K_XL")
+        self.assertIsNone(artifacts[0].size_bytes)
+        self.assertIn(
+            "artifact size is unknown because the GGUF shard set is incomplete",
+            artifacts[0].unknowns,
+        )
+
     def test_hf_mlx_recognition_uses_explicit_repository_metadata(self):
         payload = {
             "id": "org/model-mlx",
