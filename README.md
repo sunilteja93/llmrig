@@ -30,10 +30,10 @@ LLMRig Autopilot Plan
 Machine: Apple M4 Max · 48 GiB
 Model:   mlx-community/Qwen3.5-27B-4bit
 
-Runtime       Format   Quant    Local      Executable
-------------  -------  -------  ---------  ------------
-omlx          MLX      4-bit    unknown    not_executable
-mlx-lm        MLX      4-bit    unknown    not_executable
+Runtime       Format   Quant    Fit         Local      Executable
+------------  -------  -------  ----------  ---------  ------------
+omlx          MLX      4-bit    compatible  unknown    not_executable
+mlx-lm        MLX      4-bit    compatible  unknown    not_executable
 
 Setup path: omlx · MLX
 Reason: exactly one compatible candidate has a complete, supported
@@ -169,6 +169,8 @@ llmrig runtimes --json
 Runtime probing is read-only. Unsupported actions surface as explicit blockers, never silent emulation.
 
 LLMRig resolves exact `owner/repository` identifiers through read-only Hugging Face Hub metadata (no weight downloads during resolution), with strict evidence rules — e.g. an `mlx` tag alone is not proof of MLX packaging, and conflicting context, quantization, or provenance evidence fails closed.
+
+For split GGUF repositories, LLMRig collapses a complete shard set into one logical artifact, sums the verified shard sizes for machine-fit reasoning, and excludes auxiliary imatrix calibration files from runnable model candidates.
 
 ## Hugging Face
 
