@@ -97,6 +97,35 @@ class HuggingFaceBridgeTests(unittest.TestCase):
             artifact.unknowns,
         )
 
+    def test_imatrix_gguf_is_not_exposed_as_runnable_model_artifact(self):
+        result, _ = self.resolve(
+            {
+                "id": "unsloth/model-GGUF",
+                "siblings": [
+                    {"rfilename": "UD-IQ1_S/model-IQ1_S.gguf", "size": 103_000_000_000},
+                    {"rfilename": "imatrix_unsloth.gguf", "size": 649_000_000},
+                ],
+            }
+        )
+        self.assertEqual(len(result.artifacts), 1)
+        self.assertEqual(result.artifacts[0].quantization, "IQ1_S")
+        self.assertNotIn("imatrix", result.artifacts[0].artifact_id.lower())
+
+    def test_imatrix_token_in_middle_of_real_model_name_is_not_filtered(self):
+        result, _ = self.resolve(
+            {
+                "id": "owner/model-GGUF",
+                "siblings": [
+                    {
+                        "rfilename": "Qwen3-Imatrix-Tuned-Q4_K_M.gguf",
+                        "size": 4_000_000_000,
+                    }
+                ],
+            }
+        )
+        self.assertEqual(len(result.artifacts), 1)
+        self.assertEqual(result.artifacts[0].quantization, "Q4_K_M")
+
     def test_explicit_library_metadata_promotes_mlx_format(self):
         result, _ = self.resolve(
             {
