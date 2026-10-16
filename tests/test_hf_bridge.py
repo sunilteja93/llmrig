@@ -42,6 +42,61 @@ class HuggingFaceBridgeTests(unittest.TestCase):
             result.artifacts[0].unknowns,
         )
 
+    def test_sharded_gguf_collapses_to_one_logical_artifact(self):
+        result, _ = self.resolve(
+            {
+                "id": "unsloth/Beam-test-GGUF",
+                "siblings": [
+                    {
+                        "rfilename": "UD-IQ1_S/Beam-UD-IQ1_S-00001-of-00004.gguf",
+                        "size": 25_000_000_000,
+                    },
+                    {
+                        "rfilename": "UD-IQ1_S/Beam-UD-IQ1_S-00002-of-00004.gguf",
+                        "size": 26_000_000_000,
+                    },
+                    {
+                        "rfilename": "UD-IQ1_S/Beam-UD-IQ1_S-00003-of-00004.gguf",
+                        "size": 27_000_000_000,
+                    },
+                    {
+                        "rfilename": "UD-IQ1_S/Beam-UD-IQ1_S-00004-of-00004.gguf",
+                        "size": 28_000_000_000,
+                    },
+                ],
+            }
+        )
+        self.assertEqual(len(result.artifacts), 1)
+        artifact = result.artifacts[0]
+        self.assertEqual(artifact.quantization, "IQ1_S")
+        self.assertEqual(artifact.size_bytes, 106_000_000_000)
+        self.assertEqual(
+            artifact.artifact_id,
+            "hf://unsloth/Beam-test-GGUF/UD-IQ1_S/Beam-UD-IQ1_S-00001-of-00004.gguf",
+        )
+        self.assertTrue(
+            any("complete logical artifact" in item.detail for item in artifact.evidence)
+        )
+
+    def test_incomplete_sharded_gguf_does_not_invent_aggregate_size(self):
+        result, _ = self.resolve(
+            {
+                "id": "owner/incomplete-GGUF",
+                "siblings": [
+                    {"rfilename": "Q4/model-Q4_K_XL-00001-of-00003.gguf", "size": 100},
+                    {"rfilename": "Q4/model-Q4_K_XL-00003-of-00003.gguf", "size": 300},
+                ],
+            }
+        )
+        self.assertEqual(len(result.artifacts), 1)
+        artifact = result.artifacts[0]
+        self.assertEqual(artifact.quantization, "Q4_K_XL")
+        self.assertIsNone(artifact.size_bytes)
+        self.assertIn(
+            "artifact size is unknown because the GGUF shard set is incomplete",
+            artifact.unknowns,
+        )
+
     def test_explicit_library_metadata_promotes_mlx_format(self):
         result, _ = self.resolve(
             {
