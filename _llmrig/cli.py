@@ -197,17 +197,18 @@ def _print_plan(plan: AutopilotExecutionPlan) -> None:
     )
     print(f"Model:   {plan.logical_model_id or plan.model}")
     if plan.candidates:
-        print("\nRuntime       Format          Quant         Local         Executable")
-        print("------------  --------------  ------------  ------------  ------------")
+        print("\nRuntime       Format          Quant         Fit           Local         Executable")
+        print("------------  --------------  ------------  ------------  ------------  ------------")
         for item in plan.candidates:
             values = (
                 item.runtime,
                 item.artifact_format,
                 item.quantization or "unknown",
+                item.compatibility,
                 item.local_availability,
                 item.execution,
             )
-            widths = (12, 14, 12, 12, 12)
+            widths = (12, 14, 12, 12, 12, 12)
             print(
                 "  ".join(
                     _clip(value, width).ljust(width)
