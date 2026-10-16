@@ -3242,6 +3242,9 @@ def runtime_candidates_for_artifacts(
                 fit_result = "fits"
             else:
                 fit_result = "too_large"
+                blockers.append(
+                    "artifact exceeds the conservative local model-weight budget"
+                )
             unknowns = [
                 "successful model inference has not been verified",
                 "runtime memory overhead is unknown",
