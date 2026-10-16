@@ -2373,6 +2373,69 @@ SAFETENSORS_SHARD_PATTERN = re.compile(
     r"^(.*)-(\d{5})-of-(\d{5})\.safetensors$", re.I
 )
 
+GGUF_SHARD_PATTERN = re.compile(
+    r"^(.*)-(\d{5})-of-(\d{5})\.gguf$", re.I
+)
+
+
+def hf_gguf_file_sets(
+    files: Sequence[Dict[str, Any]],
+) -> Tuple[Tuple[str, Tuple[Dict[str, Any], ...], str], ...]:
+    """Group split GGUF shards into one logical artifact without guessing."""
+    singles: List[Tuple[str, Tuple[Dict[str, Any], ...], str]] = []
+    groups: Dict[Tuple[str, int], List[Tuple[int, Dict[str, Any]]]] = {}
+
+    for item in files:
+        filename = str(item.get("rfilename") or "")
+        match = GGUF_SHARD_PATTERN.match(filename)
+        if match is None:
+            singles.append((filename, (item,), "single"))
+            continue
+        prefix, index, total = match.group(1), int(match.group(2)), int(match.group(3))
+        groups.setdefault((prefix, total), []).append((index, item))
+
+    grouped: List[Tuple[str, Tuple[Dict[str, Any], ...], str]] = []
+    for (prefix, total), entries in sorted(groups.items()):
+        entries.sort(key=lambda pair: (pair[0], str(pair[1].get("rfilename") or "")))
+        indices = [index for index, _ in entries]
+        complete = (
+            total > 0
+            and len(entries) == total
+            and len(set(indices)) == total
+            and set(indices) == set(range(1, total + 1))
+        )
+        first = next(
+            (
+                str(item.get("rfilename") or "")
+                for index, item in entries
+                if index == 1
+            ),
+            str(entries[0][1].get("rfilename") or ""),
+        )
+        grouped.append(
+            (
+                first,
+                tuple(item for _, item in entries),
+                "complete" if complete else "incomplete",
+            )
+        )
+
+    return tuple(sorted(singles + grouped, key=lambda item: item[0]))
+
+
+def hf_gguf_set_size(
+    files: Sequence[Dict[str, Any]], shard_status: str
+) -> Tuple[Optional[int], str]:
+    """Return aggregate bytes only for a complete GGUF shard set or a single file."""
+    if not files:
+        return None, "missing"
+    if shard_status == "incomplete":
+        return None, "incomplete"
+    sizes = [hf_sibling_size(item) for item in files]
+    if any(size is None for size in sizes):
+        return None, "missing"
+    return sum(size for size in sizes if size is not None), "verified"
+
 
 def hf_weight_set_size(files: Sequence[Dict[str, Any]]) -> Tuple[Optional[int], str]:
     """Sum only a single file or one complete, unambiguous Safetensors shard set."""
@@ -2469,12 +2532,15 @@ def hf_artifacts_from_metadata(
     explicit_quant = hf_explicit_quantization(payload)
     artifacts: List[ModelArtifact] = []
 
-    for item in siblings:
-        filename = str(item.get("rfilename") or "")
-        if not filename.lower().endswith(".gguf"):
-            continue
-        size_bytes = hf_sibling_size(item)
+    gguf_files = [
+        item
+        for item in siblings
+        if str(item.get("rfilename") or "").lower().endswith(".gguf")
+    ]
+    for filename, gguf_set, shard_status in hf_gguf_file_sets(gguf_files):
+        size_bytes, size_status = hf_gguf_set_size(gguf_set, shard_status)
         quantization, quant_status = infer_gguf_quantization(filename)
+        sharded = GGUF_SHARD_PATTERN.match(filename) is not None
         evidence = [
             RecommendationEvidence(
                 "deterministic-inference",
@@ -2483,13 +2549,29 @@ def hf_artifacts_from_metadata(
             )
         ]
         unknowns = ["runtime compatibility is unknown"]
+        if sharded and shard_status == "complete":
+            evidence.append(
+                RecommendationEvidence(
+                    "deterministic-inference",
+                    "GGUF split-file naming rule",
+                    f"{len(gguf_set)} GGUF shards form one complete logical artifact",
+                )
+            )
         if size_bytes is not None:
             evidence.append(
                 RecommendationEvidence(
                     "verified-metadata",
                     "Hugging Face repository file metadata",
-                    f"artifact byte size is reported for {filename}",
+                    (
+                        "aggregate artifact byte size is the sum of the complete GGUF shard set"
+                        if sharded
+                        else f"artifact byte size is reported for {filename}"
+                    ),
                 )
+            )
+        elif size_status == "incomplete":
+            unknowns.append(
+                "artifact size is unknown because the GGUF shard set is incomplete"
             )
         else:
             unknowns.append("artifact size is unknown")
@@ -3160,6 +3242,9 @@ def runtime_candidates_for_artifacts(
                 fit_result = "fits"
             else:
                 fit_result = "too_large"
+                blockers.append(
+                    "artifact exceeds the conservative local model-weight budget"
+                )
             unknowns = [
                 "successful model inference has not been verified",
                 "runtime memory overhead is unknown",

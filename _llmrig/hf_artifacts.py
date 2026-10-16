@@ -19,6 +19,24 @@ _GGUF_QUANT_RE = re.compile(
 _SAFETENSORS_SHARD_RE = re.compile(
     r"^(.*)-(\d{5})-of-(\d{5})\.safetensors$", re.I
 )
+_GGUF_SHARD_RE = re.compile(
+    r"^(.*)-(\d{5})-of-(\d{5})\.gguf$", re.I
+)
+_IMATRIX_TOKEN_RE = re.compile(
+    r"^imatrix(?:[._\-]|$)|[._\-]imatrix$", re.I
+)
+
+
+def is_imatrix_filename(path: str) -> bool:
+    """Return True for calibration imatrix files that are not runnable models."""
+    name = path.rsplit("/", 1)[-1]
+    lower = name.lower()
+    for suffix in (".gguf_file", ".gguf", ".dat"):
+        if lower.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    return _IMATRIX_TOKEN_RE.search(name) is not None
+
 _CONTEXT_KEYS = (
     "max_position_embeddings",
     "n_positions",
@@ -255,6 +273,78 @@ def safetensors_weight_set(
     return paths, sum(size for size in sizes if size is not None), "verified"
 
 
+def gguf_weight_sets(
+    siblings: Iterable[Mapping[str, Any]],
+) -> Tuple[
+    Tuple[str, Mapping[str, Any], Tuple[str, ...], Optional[int], str], ...
+]:
+    """Collapse complete split-GGUF shard sets into logical artifacts."""
+
+    by_path = {}
+    for item in siblings:
+        path = str(item.get("rfilename") or item.get("path") or "").strip()
+        if path.lower().endswith(".gguf") and not is_imatrix_filename(path):
+            by_path.setdefault(path, item)
+
+    singles = []
+    groups = {}
+    for path in sorted(by_path):
+        match = _GGUF_SHARD_RE.match(path)
+        if match is None:
+            item = by_path[path]
+            size = sibling_size(item)
+            singles.append(
+                (
+                    path,
+                    item,
+                    (path,),
+                    size,
+                    "verified" if size is not None else "missing_size",
+                )
+            )
+            continue
+        prefix, index, total = match.group(1), int(match.group(2)), int(match.group(3))
+        groups.setdefault((prefix, total), []).append((index, path, by_path[path]))
+
+    output = list(singles)
+    for (prefix, total), entries in sorted(groups.items()):
+        entries.sort(key=lambda item: (item[0], item[1]))
+        indices = [index for index, _, _ in entries]
+        members = tuple(path for _, path, _ in entries)
+        complete = (
+            total > 0
+            and len(entries) == total
+            and len(set(indices)) == total
+            and set(indices) == set(range(1, total + 1))
+        )
+        representative = next(
+            ((path, item) for index, path, item in entries if index == 1),
+            (entries[0][1], entries[0][2]),
+        )
+        if not complete:
+            size_bytes = None
+            status = "incomplete"
+        else:
+            sizes = [sibling_size(item) for _, _, item in entries]
+            if any(size is None for size in sizes):
+                size_bytes = None
+                status = "missing_size"
+            else:
+                size_bytes = sum(size for size in sizes if size is not None)
+                status = "verified"
+        output.append(
+            (
+                representative[0],
+                representative[1],
+                members,
+                size_bytes,
+                status,
+            )
+        )
+
+    return tuple(sorted(output, key=lambda item: item[0]))
+
+
 def classify_hub_file(
     model_id: str,
     sibling: Mapping[str, Any],
@@ -269,6 +359,8 @@ def classify_hub_file(
     if not path:
         return None
     lower = path.lower()
+    if is_imatrix_filename(path):
+        return None
     size = sibling_size(sibling)
     evidence = []
     unknowns = []
@@ -453,13 +545,7 @@ def classify_hub_repository(
         repository_unknowns.append("quantization metadata is conflicting")
 
     artifacts = []
-    for item in sorted(
-        siblings,
-        key=lambda value: str(value.get("rfilename") or value.get("path") or ""),
-    ):
-        path = str(item.get("rfilename") or item.get("path") or "")
-        if not path.lower().endswith(".gguf"):
-            continue
+    for path, item, members, size_bytes, size_status in gguf_weight_sets(siblings):
         artifact = classify_hub_file(
             logical_model_id,
             item,
@@ -471,6 +557,42 @@ def classify_hub_repository(
             continue
         evidence = list(artifact.evidence)
         unknowns = list(artifact.unknowns)
+        sharded = _GGUF_SHARD_RE.match(path) is not None
+        if sharded:
+            evidence = [
+                entry
+                for entry in evidence
+                if not (
+                    entry.source == "Hugging Face repository file metadata"
+                    and entry.detail == "artifact byte size is reported by repository metadata"
+                )
+            ]
+            unknowns = [
+                entry for entry in unknowns if entry != "artifact size is unknown"
+            ]
+            if size_status == "verified" and size_bytes is not None:
+                evidence.extend(
+                    (
+                        HubEvidence(
+                            "deterministic-inference",
+                            "GGUF split-file naming rule",
+                            f"{len(members)} GGUF shards form one complete logical artifact",
+                        ),
+                        HubEvidence(
+                            "verified-metadata",
+                            "Hugging Face repository file metadata",
+                            "artifact size is the sum of the complete GGUF shard set",
+                        ),
+                    )
+                )
+            elif size_status == "incomplete":
+                unknowns.append(
+                    "artifact size is unknown because the GGUF shard set is incomplete"
+                )
+            else:
+                unknowns.append(
+                    "artifact size is unknown because at least one GGUF shard size is missing"
+                )
         if context_evidence is not None:
             evidence.append(context_evidence)
         elif context_status == "ambiguous":
@@ -480,6 +602,8 @@ def classify_hub_repository(
         artifacts.append(
             replace(
                 artifact,
+                size_bytes=size_bytes,
+                members=members,
                 evidence=tuple(dict.fromkeys(evidence)),
                 unknowns=tuple(dict.fromkeys(unknowns)),
             )

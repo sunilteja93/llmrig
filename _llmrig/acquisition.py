@@ -23,6 +23,7 @@ from .privacy import validate_public_text
 
 ACQUISITION_SCHEMA_VERSION = "0.9"
 _REPO_PART_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_GGUF_SHARD_RE = re.compile(r"^(.*)-(\d{5})-of-(\d{5})\.gguf$", re.I)
 
 
 class AcquisitionError(RuntimeError):
@@ -59,6 +60,33 @@ class HuggingFaceArtifactSource:
     @property
     def is_gguf_file(self) -> bool:
         return self.artifact_path.lower().endswith(".gguf")
+
+    @property
+    def gguf_shard_info(self) -> Optional[Tuple[str, int, int]]:
+        match = _GGUF_SHARD_RE.match(self.artifact_path)
+        if match is None:
+            return None
+        return match.group(1), int(match.group(2)), int(match.group(3))
+
+    @property
+    def is_gguf_shard_set(self) -> bool:
+        return self.gguf_shard_info is not None
+
+    @property
+    def gguf_shard_pattern(self) -> Optional[str]:
+        info = self.gguf_shard_info
+        if info is None:
+            return None
+        prefix, _, total = info
+        return f"{prefix}-*-of-{total:05d}.gguf"
+
+    @property
+    def gguf_first_shard_path(self) -> Optional[str]:
+        info = self.gguf_shard_info
+        if info is None:
+            return None
+        prefix, _, total = info
+        return f"{prefix}-00001-of-{total:05d}.gguf"
 
 
 @dataclass(frozen=True)
@@ -282,7 +310,19 @@ def acquire_huggingface_artifact(
     revision = _exact_revision(hub, source.repository_id)
 
     try:
-        if source.is_gguf_file:
+        if source.is_gguf_shard_set:
+            pattern = source.gguf_shard_pattern
+            first_shard = source.gguf_first_shard_path
+            if pattern is None or first_shard is None:
+                raise AcquisitionError("invalid GGUF shard-set identity")
+            root = hub.snapshot_download(
+                repo_id=source.repository_id,
+                revision=revision,
+                allow_patterns=[pattern],
+            )
+            locator = str(Path(root) / first_shard)
+            acquisition_kind = "huggingface-gguf-shards"
+        elif source.is_gguf_file:
             locator = hub.hf_hub_download(
                 repo_id=source.repository_id,
                 filename=source.artifact_path,
@@ -348,7 +388,19 @@ def rehydrate_huggingface_artifact(
     record = matches[0]
     hub = _hub_module()
     try:
-        if source.is_gguf_file:
+        if source.is_gguf_shard_set:
+            pattern = source.gguf_shard_pattern
+            first_shard = source.gguf_first_shard_path
+            if pattern is None or first_shard is None:
+                raise AcquisitionError("invalid GGUF shard-set identity")
+            root = hub.snapshot_download(
+                repo_id=source.repository_id,
+                revision=record.revision,
+                allow_patterns=[pattern],
+                local_files_only=True,
+            )
+            locator = str(Path(root) / first_shard)
+        elif source.is_gguf_file:
             locator = hub.hf_hub_download(
                 repo_id=source.repository_id,
                 filename=source.artifact_path,

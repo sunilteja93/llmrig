@@ -151,6 +151,56 @@ class AutopilotPlanTests(unittest.TestCase):
             ["acquire_artifact", "load_model", "verify"],
         )
 
+    def test_all_memory_incompatible_candidates_explain_machine_fit(self):
+        first = self.candidate(
+            candidate_id="candidate-iq1",
+            runtime="llama.cpp",
+            assessments={
+                **self.candidate()["assessments"],
+                "compatibility": {
+                    "state": "incompatible",
+                    "blockers": [
+                        "artifact exceeds the conservative local model-weight budget"
+                    ],
+                    "unknowns": [],
+                },
+                "runtime_availability": {
+                    "state": "unavailable",
+                    "blockers": ["runtime is not installed"],
+                    "unknowns": [],
+                },
+            },
+        )
+        second = self.candidate(
+            candidate_id="candidate-q4",
+            runtime="llama.cpp",
+            assessments={
+                **self.candidate()["assessments"],
+                "compatibility": {
+                    "state": "incompatible",
+                    "blockers": [
+                        "artifact exceeds the conservative local model-weight budget"
+                    ],
+                    "unknowns": [],
+                },
+                "runtime_availability": {
+                    "state": "unavailable",
+                    "blockers": ["runtime is not installed"],
+                    "unknowns": [],
+                },
+            },
+        )
+        payload = self.solve_payload(recommended=False, candidate=first)
+        payload["candidates"] = [first, second]
+        plan = build_autopilot_plan(payload, self.machine())
+
+        self.assertIsNone(plan.selected_candidate_id)
+        self.assertEqual(
+            plan.recommendation_reason,
+            "All discovered model configurations exceed the conservative "
+            "model-weight budget for this machine.",
+        )
+
     def test_non_hf_missing_artifact_fails_closed_for_acquisition(self):
         candidate = self.candidate(artifact_id="artifact-without-evidenced-source")
         plan = build_autopilot_plan(
