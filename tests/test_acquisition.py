@@ -41,6 +41,21 @@ class AcquisitionTests(unittest.TestCase):
         self.assertTrue(source.is_gguf_file)
         self.assertFalse(source.is_snapshot)
 
+    def test_parse_sharded_gguf_source(self):
+        source = acquisition.parse_hf_artifact_id(
+            "hf://org/model/sub/model-Q4_K_XL-00002-of-00004.gguf"
+        )
+        self.assertTrue(source.is_gguf_file)
+        self.assertTrue(source.is_gguf_shard_set)
+        self.assertEqual(
+            source.gguf_shard_pattern,
+            "sub/model-Q4_K_XL-*-of-00004.gguf",
+        )
+        self.assertEqual(
+            source.gguf_first_shard_path,
+            "sub/model-Q4_K_XL-00001-of-00004.gguf",
+        )
+
     def test_parse_rejects_parent_traversal(self):
         with self.assertRaises(ValueError):
             acquisition.parse_hf_artifact_id("hf://org/model/../secret.gguf")
@@ -88,6 +103,29 @@ class AcquisitionTests(unittest.TestCase):
         self.assertEqual(call[1]["filename"], "model-Q4_K_M.gguf")
         self.assertEqual(call[1]["revision"], "a" * 40)
         self.assertEqual(acquired.record.acquisition_kind, "huggingface-file")
+
+    def test_sharded_gguf_download_fetches_complete_set_and_returns_first_shard(self):
+        hub = _FakeHub()
+        artifact_id = "hf://org/model/model-Q4_K_XL-00001-of-00004.gguf"
+        with mock.patch.object(acquisition, "_hub_module", return_value=hub), mock.patch.object(
+            acquisition, "record_acquisition"
+        ):
+            acquired = acquisition.acquire_huggingface_artifact(
+                artifact_id, "llama.cpp"
+            )
+
+        call = next(call for call in hub.calls if call[0] == "snapshot_download")
+        self.assertEqual(
+            call[1]["allow_patterns"],
+            ["model-Q4_K_XL-*-of-00004.gguf"],
+        )
+        self.assertEqual(call[1]["revision"], "a" * 40)
+        self.assertTrue(
+            acquired.locator.endswith("model-Q4_K_XL-00001-of-00004.gguf")
+        )
+        self.assertEqual(
+            acquired.record.acquisition_kind, "huggingface-gguf-shards"
+        )
 
     def test_rehydrate_uses_only_exact_local_cache_and_pinned_revision(self):
         hub = _FakeHub()
