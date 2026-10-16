@@ -429,6 +429,25 @@ def build_autopilot_plan(
                 )
         else:
             recommendation_status = "inconclusive"
+            if candidates and all(
+                candidate.compatibility == "incompatible" for candidate in candidates
+            ):
+                if all(
+                    any(
+                        "model-weight budget" in blocker
+                        for blocker in candidate.blockers
+                    )
+                    for candidate in candidates
+                ):
+                    recommendation_reason = (
+                        "All discovered model configurations exceed the conservative "
+                        "model-weight budget for this machine."
+                    )
+                else:
+                    recommendation_reason = (
+                        "All discovered model configurations are incompatible with "
+                        "this machine."
+                    )
 
     if selected_candidate_id is None:
         blockers.append("no unique evidenced candidate is selected for apply")
