@@ -2,6 +2,36 @@
 
 All notable changes to LLMRig will be documented here.
 
+## 0.9.3 - 2026-10-16
+
+### GGUF planning and compatibility
+
+- Treat split GGUF shard sets as one logical model artifact instead of one
+  candidate per shard.
+- Require complete shard sets before trusting aggregate artifact size; incomplete
+  sets stay explicitly unknown.
+- Use aggregate GGUF size in the existing conservative machine-fit reasoning so
+  oversized configurations can be ruled out before model-weight download.
+- Exclude GGUF imatrix calibration artifacts from runnable model candidates.
+- Preserve the memory-fit blocker independently of runtime installation state.
+
+### Autopilot output
+
+- Add a `Fit` column to `llmrig plan` so compatibility is visible alongside
+  local availability and executability.
+- Explain plans where every discovered configuration exceeds the conservative
+  model-weight budget instead of reducing the result to a generic inconclusive
+  message.
+
+### Validation
+
+- Add regression coverage for complete and incomplete split GGUF sets, shard-set
+  acquisition, imatrix filtering, compatibility rendering, and memory-fit plan
+  explanations.
+- Validate the Beam 501B A23B GGUF repository on an Apple M4 Max with 48 GiB
+  unified memory without downloading model weights.
+- 328 local tests passed, with cross-platform CI and CodeQL green before release.
+
 
 ## 0.9.2 - 2026-09-25
 
