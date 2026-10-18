@@ -9,9 +9,9 @@ ROOT = Path(__file__).resolve().parents[1]
 class OnboardingDocsTests(unittest.TestCase):
     def test_readme_links_to_real_demo_and_current_source_install(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertIn("docs/VERIFIED_DEMOS.md", readme)
-        self.assertIn("assets/verified-dual-runtime.svg", readme)
-        self.assertIn("docs/INSTALL.md", readme)
+        self.assertIn("https://github.com/sunilteja93/llmrig/blob/main/docs/VERIFIED_DEMOS.md", readme)
+        self.assertIn("https://raw.githubusercontent.com/sunilteja93/llmrig/main/assets/verified-dual-runtime.svg", readme)
+        self.assertIn("https://github.com/sunilteja93/llmrig/blob/main/docs/INSTALL.md", readme)
         self.assertIn("pipx install 'git+https://github.com/sunilteja93/llmrig.git@main'", readme)
         self.assertIn("different models and workloads", readme.lower())
         self.assertTrue((ROOT / "docs/INSTALL.md").exists())
