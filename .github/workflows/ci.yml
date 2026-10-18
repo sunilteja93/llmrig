@@ -106,6 +106,12 @@ jobs:
               "_llmrig/hf_bridge.py",
               "_llmrig/omlx_api.py",
               "_llmrig/omlx_verify.py",
+              "_llmrig/rescue.py",
+              "_llmrig/rescue_agent.py",
+              "_llmrig/rescue_ab.py",
+              "_llmrig/rescue_trace.py",
+              "_llmrig/rescue_evidence.py",
+              "_llmrig/rescue_compaction_ab.py",
           }
           with zipfile.ZipFile(wheels[0]) as archive:
               names = set(archive.namelist())
@@ -140,6 +146,8 @@ jobs:
           "$RUNNER_TEMP/llmrig-wheel/bin/llmrig" --version
           "$RUNNER_TEMP/llmrig-wheel/bin/llmrig" --help >/dev/null
           "$RUNNER_TEMP/llmrig-wheel/bin/llmrig" runtimes --json >/dev/null
+          "$RUNNER_TEMP/llmrig-wheel/bin/llmrig" rescue --help >/dev/null
+          "$RUNNER_TEMP/llmrig-wheel/bin/llmrig" rescue-evidence --help >/dev/null
 
       - name: Smoke-test new-user pipx wheel install outside checkout
         shell: bash

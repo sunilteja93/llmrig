@@ -87,6 +87,12 @@ def compare_compaction(model: str, context: int, repeats: int = 1,
         "trials": [],
         "groups": None,
         "observed_comparison": None,
+        "diagnosis": {
+            "code": "insufficient_comparable_evidence",
+            "confidence": "unverified",
+            "candidate_mitigation": "disable_auto_compaction_in_disposable_test_only",
+            "real_configuration_recommended": False,
+        },
         "recommendation": "no_automatic_or_global_compaction_change",
         "limitations": [
             "Task suite is tiny and synthetic, not representative of coding agents.",
@@ -161,5 +167,37 @@ def compare_compaction(model: str, context: int, repeats: int = 1,
                 else "no_observed_strict_pass_difference"
             ),
             "evidence_strength": "exploratory_small_sample_not_causally_verified",
+        }
+    if full:
+        # This is a reproducible *signature* of a suspected compaction
+        # interaction, not proof that a compaction event actually occurred.
+        # An explanation-only rubric miss does not invalidate correct-fix
+        # evidence, but it cannot count as a strict completed task pass.
+        repeatable_signature = (
+            len(baseline) == len(candidate) and len(baseline) >= 3
+            and base["timeouts_with_fix"] == len(baseline)
+            and base["process_exits"] == 0
+            and modified["strict_passes"] == len(candidate)
+            and modified["timeouts"] == 0
+            and all(t.get("failure_category") != "test_boundary_violation"
+                    and (t.get("checks") or {}).get("fixture_unchanged") is True
+                    and (t.get("checks") or {}).get("no_disallowed_tool_observed") is True
+                    for t in trials)
+        )
+        result["diagnosis"] = {
+            "code": (
+                "suspected_compaction_associated_post_answer_continuation"
+                if repeatable_signature else "mixed_or_insufficient_compaction_evidence"
+            ),
+            "confidence": "exploratory_controlled_observation_not_root_cause",
+            "candidate_mitigation": "disable_auto_compaction_in_disposable_test_only",
+            "real_configuration_recommended": False,
+            "supporting_default_timeouts_after_fix": base["timeouts_with_fix"],
+            "supporting_candidate_strict_passes": modified["strict_passes"],
+            "known_unknowns": [
+                "No direct OpenCode compaction event is verified.",
+                "Effective per-request Ollama context is unverified.",
+                "A single small task suite cannot prove general reliability.",
+            ],
         }
     return result

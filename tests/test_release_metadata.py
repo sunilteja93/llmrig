@@ -15,6 +15,25 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertIsNotNone(citation_match)
         self.assertEqual(citation_match.group(1), llmrig.VERSION)
         self.assertIn(f"## {llmrig.VERSION} - ", changelog)
+        if llmrig.VERSION == "0.11.0":
+            self.assertIn("date-released: 2026-10-18", citation)
+            readme = (root / "README.md").read_text(encoding="utf-8")
+            self.assertIn("Install LLMRig v0.11.0", readme)
+            self.assertIn("## New in v0.11.0: Rescue", readme)
+            self.assertIn("--compaction-ab", readme)
+            self.assertTrue((root / "docs/RELEASE_NOTES_v0.11.0.md").exists())
+            rescue_notes = (root / "docs/RELEASE_NOTES_v0.11.0.md").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("0/3", rescue_notes)
+            self.assertIn("3/3", rescue_notes)
+            self.assertIn("not statistical proof", rescue_notes)
+            self.assertIn(
+                "no automatic or global compaction change", rescue_notes
+            )
+            self.assertIn("GitHub Release", (root / "RELEASING.md").read_text(
+                encoding="utf-8"
+            ))
         if llmrig.VERSION == "0.10.0":
             self.assertIn("date-released: 2026-10-18", citation)
             readme = (root / "README.md").read_text(encoding="utf-8")

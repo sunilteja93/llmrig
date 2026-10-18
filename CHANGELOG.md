@@ -2,6 +2,42 @@
 
 All notable changes to LLMRig will be documented here.
 
+## 0.11.0 - 2026-10-18
+
+### LLMRig Rescue (experimental)
+- Ship `llmrig rescue` OpenCode + Ollama preflight with explicitly opted-in
+  synthetic tool-call probes and read-only coding-agent tasks in disposable
+  workspaces. No existing user project is opened or modified.
+- Add privacy-filtered OpenCode JSONL event-sequence diagnostics distinguishing
+  observed correct-fix text from agent completion, nonzero exits, timeouts,
+  explanation-rubric misses and test-boundary violations.
+- Add versioned three-task, paired A/B tests for context declarations and
+  automatic-compaction policies with alternating order, equal per-session
+  timeout budgets, integrity checks and explicit noncausal limitations.
+- Add `rescue-evidence` for offline comparison of explicitly selected JSON
+  receipts. Support legacy baseline receipts with missing policy fields
+  while disclosing that uncertainty. Never send reports remotely.
+- Emit a conservative diagnosis for the repeated pattern of correct-fix
+  evidence followed by timeouts under default compaction with successful
+  independent compaction-disabled fixture runs. **Never** recommend
+  automatically or globally disabling automatic compaction.
+
+### Field evidence and scope
+- On one Apple M4 Max 48 GiB with OpenCode 1.19.3, Ollama 0.33.3 and
+  local `qwen3.8:27b-mlx`, the controlled 3-task 4K-*declared*-context
+  experiment recorded 0/3 strict passes with default compaction (3 timeouts
+  after correction evidence), versus 3/3 strict passes with compaction
+  explicitly disabled (all 6 contained correct-fix evidence).
+- Separately, 3/3 repeated compaction-disabled parity tasks passed in
+  28.43 s, 22.36 s and 10.21 s. All observations were reported by one
+  machine/user; no independent attestation or statistical claim.
+- Effective Ollama per-request context, direct compaction events,
+  broader generalization, and a safe persistent real-world mitigation
+  remain unverified. Disposable HOME and tool restrictions are **not**
+  an operating-system sandbox.
+- Preserve Autopilot capabilities, Python 3.9+ support and existing
+  opt-in mutation boundaries. No new dependency or silent downloads.
+
 ## 0.10.0 - 2026-10-18
 
 ### Real Autopilot validation
