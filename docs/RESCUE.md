@@ -142,27 +142,27 @@ debugging tasks with objective, deterministic graders:
 
 1. Parity predicate accidentally detects odd instead of even.
 2. Nonnegative clamp inadvertently negates its input.
-3. Prefix check accidentally uses \`endswith\`.
+3. Prefix check accidentally uses `endswith`.
 
 The same installed Ollama model runs in isolated temporary OpenCode sessions
 with two *declared* context allocations. Each task is repeated for both
 configurations, alternating execution order between tasks and repeats to
 reduce basic warmup and order bias.
 
-\`\`\`bash
+```bash
 llmrig rescue --agent opencode --model qwen3.8:27b-mlx \
   --context 4096 --compare-context 8192 \
   --ab-test --ab-repeats 2 \
   --agent-timeout 90 --ab-budget 600 \
   --output rescue-ab.json
-\`\`\`
+```
 
 **Runtime cost:** The default experiment invokes 12 OpenCode sessions
 (3 tasks × 2 contexts × 2 repeats). Each session can execute inference, and
 the A/B run has a 600-second total budget by default. A run in progress
 uses at most its assigned individual session timeout, which can be shorter
 than the total budget. No user project is opened, and no persistent model or
-agent configuration is changed. The tool never runs without \`--ab-test\`.
+agent configuration is changed. The tool never runs without `--ab-test`.
 
 The result includes every task ID, context, repeated-trial index, pass/fail,
 whitelisted check booleans, elapsed seconds and any failure category. It
@@ -173,7 +173,7 @@ violation stops subsequent tasks.
 
 **Very important limitations:** The two OpenCode settings change the context
 *advertised in the agent's local provider config*. This does not independently
-verify Ollama's actual effective \`num_ctx\` allocation, so the experiment
+verify Ollama's actual effective `num_ctx` allocation, so the experiment
 does not establish true context-size effects. Prompts are intentionally
 short and do not stress long-context capacity. The fixed tiny tasks are
 not representative coding benchmarks, and repeated results from one
