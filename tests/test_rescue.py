@@ -44,7 +44,7 @@ class RescueTests(unittest.TestCase):
         self.addCleanup(self.host.stop)
 
     def test_read_only_preflight_never_calls_chat_or_agent(self):
-        with mock.patch.object(rescue, "_http", side_effect=fake_api) as http, \\
+        with mock.patch.object(rescue, "_http", side_effect=fake_api) as http, \
              mock.patch.object(rescue.shutil, "which", return_value="/usr/bin/opencode"):
             result = rescue.rescue("opencode", "qwen3.8:27b-mlx", 4096, 3, None, False)
         self.assertEqual(result["status"], "ready_for_probe")
@@ -66,7 +66,7 @@ class RescueTests(unittest.TestCase):
         self.assertNotIn("/api/pull", [c.args[1] for c in http.call_args_list])
 
     def test_measured_two_context_canary_is_explicit_and_bounded(self):
-        with mock.patch.object(rescue, "_http", side_effect=fake_api) as http, \\
+        with mock.patch.object(rescue, "_http", side_effect=fake_api) as http, \
              mock.patch.object(rescue.shutil, "which", return_value=None):
             r = rescue.rescue("opencode", "qwen3.8:27b-mlx", 4096, 3, 8192, True)
         self.assertEqual(r["status"], "measured")
@@ -117,7 +117,7 @@ class RescueTests(unittest.TestCase):
     def test_reject_remote_api_even_in_read_only_mode(self):
         for host in ["https://127.0.0.1:11434", "http://example.com:11434",
                      "http://127.0.0.1:11434/foo", "http://user:pw@127.0.0.1:11434"]:
-            with mock.patch.dict(os.environ, {"OLLAMA_HOST": host}), \\
+            with mock.patch.dict(os.environ, {"OLLAMA_HOST": host}), \
                  self.assertRaises(rescue.RescueError):
                 rescue.local_host()
 
@@ -137,7 +137,7 @@ class RescueTests(unittest.TestCase):
         self.assertEqual(result["probes"][0]["outcomes"], ["transport_error"]*2)
 
     def test_cli_preflight_report_and_no_overwrite(self):
-        with tempfile.TemporaryDirectory() as tmp, \\
+        with tempfile.TemporaryDirectory() as tmp, \
              mock.patch.object(rescue, "_http", side_effect=fake_api):
             path = str(Path(tmp) / "rescue.json")
             args = ["rescue", "--agent", "opencode", "--model", "qwen3.8:27b-mlx",
