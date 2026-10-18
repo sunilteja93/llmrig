@@ -158,6 +158,53 @@ class RescueAgentTests(unittest.TestCase):
             rescue.rescue("opencode", "qwen3.8:27b-mlx", 8192, 3, 4096, False,
                           agent_test=True)
 
+    def test_agent_evaluation_replaces_preflight_unknown_with_measured_evidence(self):
+        import copy
+        base = {
+            "mode": "preflight",
+            "scope": "Ollama protocol preflight, NOT end-to-end agent evaluation",
+            "status": "ready_for_probe", "agent_executable_detected": True,
+            "agent": "opencode", "model": "qwen3.8:27b-mlx", "context_tokens": 8192,
+            "blockers": [], "unknowns": [
+                "OpenCode tool execution and task completion have not been tested",
+                "Other independent evidence is still missing",
+            ], "probes": [], "comparison": None,
+        }
+        evaluated = {
+            "status": "passed",
+            "checks": {"read_tool_completed": True},
+            "failure_category": None,
+        }
+        with mock.patch.object(rescue, "preflight", side_effect=lambda *args: copy.deepcopy(base)), \
+             mock.patch.object(rescue, "local_host", return_value="http://127.0.0.1:11434"), \
+             mock.patch.object(rescue_agent, "evaluate", return_value=evaluated):
+            preflight = rescue.rescue("opencode", "qwen3.8:27b-mlx", 8192, 3, None, False)
+            self.assertEqual(preflight["unknowns"][0],
+                             "OpenCode tool execution and task completion have not been tested")
+            self.assertIn("protocol preflight", rescue.format_terminal(preflight))
+
+            measured = rescue.rescue(
+                "opencode", "qwen3.8:27b-mlx", 8192, 3, None, False, agent_test=True
+            )
+            self.assertEqual(measured["status"], "agent_task_passed")
+            self.assertEqual(measured["mode"], "measured_agent_task")
+            self.assertIn("One disposable OpenCode coding-task", measured["scope"])
+            self.assertNotIn("have not been tested", json.dumps(measured))
+            self.assertIn("Other independent evidence is still missing", measured["unknowns"])
+            summary = rescue.format_terminal(measured)
+            self.assertTrue(summary.startswith(
+                "LLMRig Rescue | OpenCode coding-task evaluation\n"
+            ))
+            self.assertIn("Agent coding task: passed", summary)
+            self.assertNotIn("have not been tested", summary)
+
+            evaluated["status"] = "failed"
+            failed = rescue.rescue(
+                "opencode", "qwen3.8:27b-mlx", 8192, 3, None, False, agent_test=True
+            )
+            self.assertEqual(failed["status"], "agent_task_failed")
+            self.assertNotIn("have not been tested", json.dumps(failed))
+
     def test_cli_invocation_reports_agent_result(self):
         fake = {
             "status": "agent_task_passed", "agent": "opencode",
