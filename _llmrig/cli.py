@@ -195,6 +195,62 @@ def _report_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _rescue_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="llmrig rescue",
+        description=(
+            "Diagnose an OpenCode + local Ollama setup. A synthetic tool-call "
+            "transport canary runs ONLY when --probe is supplied. No agent is executed."
+        ),
+    )
+    parser.add_argument("--agent", choices=["opencode"], required=True)
+    parser.add_argument("--model", required=True, help="Exact installed Ollama model tag.")
+    parser.add_argument("--context", type=int, default=4096)
+    parser.add_argument(
+        "--compare-context", type=int, default=None,
+        help="Run a second measured context configuration; requires --probe.",
+    )
+    parser.add_argument("--runs", type=int, default=3, help="Canary trials per context (1-5).")
+    parser.add_argument(
+        "--probe", action="store_true",
+        help="Opt in to bounded local inference (not an OpenCode end-to-end task).",
+    )
+    parser.add_argument("--json", action="store_true", help="Print privacy-filtered JSON.")
+    parser.add_argument(
+        "--output", help="Write report JSON to a new file; never overwrite.",
+    )
+    return parser
+
+
+def command_rescue(args: argparse.Namespace) -> int:
+    from .rescue import RescueError, rescue, format_terminal
+
+    try:
+        report = rescue(
+            args.agent, args.model, args.context, args.runs,
+            args.compare_context, args.probe,
+        )
+    except RescueError as exc:
+        print("llmrig rescue: " + str(exc), file=sys.stderr)
+        return 2
+
+    payload = json.dumps(report, indent=2) + "\\n"
+    if args.output:
+        try:
+            with Path(args.output).open("x", encoding="utf-8") as dest:
+                dest.write(payload)
+        except OSError as exc:
+            print(
+                "llmrig rescue: unable to create output (" + exc.__class__.__name__ + ")",
+                file=sys.stderr,
+            )
+            return 2
+        print("Rescue report saved locally. No report was uploaded.")
+    else:
+        print(payload, end="") if args.json else print(format_terminal(report), end="")
+    return 0 if report["status"] in ("ready_for_probe", "measured") else 2
+
+
 def _build_plan(model: str, context: Optional[int], legacy: object) -> AutopilotExecutionPlan:
     if context is not None and context <= 0:
         raise ValueError("--context must be a positive integer")
@@ -577,6 +633,9 @@ def _print_augmented_help() -> int:
     print("  run MODEL           Plan, approve, apply, and verify in one workflow.")
     print("  doctor [MODEL]      Read-only diagnosis with actionable next steps.")
     print("  report [RECEIPT]    Privacy-filtered, shareable verification report.")
+    print("\\nRescue (initial protocol diagnostic):")
+    print("  rescue --agent opencode --model MODEL")
+    print("                       Read-only preflight; --probe opts into bounded inference.")
     return 0
 
 
@@ -586,6 +645,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return command_runtimes(_runtimes_parser().parse_args(values[1:]))
     if values and values[0] == "report":
         return command_report(_report_parser().parse_args(values[1:]))
+    if values and values[0] == "rescue":
+        return command_rescue(_rescue_parser().parse_args(values[1:]))
     if values in (["--help"], ["-h"]):
         return _print_augmented_help()
 
