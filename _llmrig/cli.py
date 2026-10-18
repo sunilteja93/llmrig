@@ -19,7 +19,7 @@ from .autopilot_evidence import record_receipt_evidence
 from .autopilot_plan import AutopilotExecutionPlan, build_autopilot_plan
 from .hf_bridge import hf_metadata_for_legacy
 from .guidance import diagnosis, next_steps
-from .rig_report import build_share_report, format_json as format_report_json, format_markdown
+from .rig_report import build_share_report, format_json as format_report_json, format_markdown, format_terminal
 from .omlx_acquisition_provenance import omlx_acquisition_for_legacy
 from .omlx_verify import omlx_verify_for_legacy
 from .runtime_adapters import RuntimeProbe, probe_runtimes
@@ -301,7 +301,8 @@ def command_report(args: argparse.Namespace) -> int:
     try:
         payload = load_receipt(args.receipt)
         report = build_share_report(payload)
-        body = format_report_json(report) if args.json else format_markdown(report)
+        body = (format_report_json(report) if args.json else
+                format_markdown(report) if args.share else format_terminal(report))
     except (ApplyError, ValueError) as exc:
         print(f"llmrig report: {exc}", file=sys.stderr)
         return 2
