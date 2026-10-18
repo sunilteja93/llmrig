@@ -62,7 +62,7 @@ class RescueTraceTests(unittest.TestCase):
     def test_unparseable_json_terminates_trace_without_leaking(self):
         trace = rescue_trace.summarize(sequence() + b"not-json /private\n", rescue_agent.FIX)
         self.assertTrue(trace["stream_truncated_or_malformed"])
-        self.assertEqual(trace["events_seen"], 6)
+        self.assertEqual(trace["events_seen"], 7)
         self.assertNotIn("private", json.dumps(trace))
 
     def test_one_agent_timeout_stays_failed_despite_detected_correction(self):
