@@ -17,15 +17,24 @@
 
 ## Start here
 
-Install once, diagnose the setup, then run only if LLMRig can establish a supported path:
+**Try the current Autopilot features:** the latest GitHub `main` contains
+changes not yet published in PyPI v0.9.3. Install it in an isolated
+[`pipx`](https://pipx.pypa.io/) environment (Git and Python 3.9+ required).
+See the [installation guide](docs/INSTALL.md) for platform-specific setup.
 
 ~~~bash
-pipx install llmrig
+pipx install 'git+https://github.com/sunilteja93/llmrig.git@main'
+llmrig --help
 llmrig runtimes
 llmrig doctor mlx-community/Qwen3-0.6B-4bit
 llmrig plan mlx-community/Qwen3-0.6B-4bit
 llmrig run mlx-community/Qwen3-0.6B-4bit
 ~~~
+
+Only `run` is an execution request. Review its plan before approving
+downloads, starts or other changes. oMLX must be installed and ready
+for the tested small-model setup; a different machine may select a
+different path or report a blocker.
 
 The new **doctor** command is read-only and explains the next step when a runtime or model is blocked. **run** previews the planned actions and asks permission before downloading, installing, or starting anything. If evidence does not support an executable path, LLMRig stops and explains why. It never pretends a model ran.
 
@@ -39,15 +48,44 @@ llmrig report --json --output rig-report.json
 
 Reports do not upload or publish anything automatically. They omit local private paths, secrets, endpoints, and unrecorded hardware details. They are self-reported measurements, not independent attestations.
 
-**Want a known measured example?** LLMRig's recorded Apple M4 Max / 48 GiB observation of mlx-community/Qwen3-0.6B-4bit running on MLX-LM measured 560.85 generation tokens/s with race-v2. This is one measured configuration, not an estimate for your machine or a model-quality score.
+**Actual end-to-end examples:** We verified the complete Autopilot flow on an
+Apple M4 Max (48 GiB) with **oMLX + Qwen3 0.6B** (two measured runs,
+0.29 s reported latency, no recorded throughput) and
+**Ollama + qwen3.8:27b-mlx** (two runs, 49.93 generation tokens/s,
+2.5861 s reported latency). These are different models and workloads,
+**not a speed comparison**. See
+[the reproducible field-run notes](docs/VERIFIED_DEMOS.md)
+for exact tags, provenance, missing metrics and setup blockers.
 
-Learn more in the [first-run guide](https://github.com/sunilteja93/llmrig/blob/main/docs/FIRST_RUN.md) and the [reproducible validation matrix](https://github.com/sunilteja93/llmrig/blob/main/docs/VALIDATION_MATRIX.md).
+Earlier independent LLMRig race-v2 measurements of
+`mlx-community/Qwen3-0.6B-4bit` on MLX-LM also recorded
+560.85 generation tokens/s. These observations describe their own
+configuration only and are not predictions for your machine.
+
+Learn more in the [installation guide](docs/INSTALL.md),
+[first-run guide](docs/FIRST_RUN.md),
+[verified Autopilot field runs](docs/VERIFIED_DEMOS.md), and
+[validation matrix](docs/VALIDATION_MATRIX.md).
 
 **Installation broken?** See [Troubleshooting](https://github.com/sunilteja93/llmrig/blob/main/docs/TROUBLESHOOTING.md) for recovery from stale virtual environments and missing installed package metadata.
 
 **Want a visual card?** Open [the offline Rig Report viewer](https://github.com/sunilteja93/llmrig/blob/main/docs/rig-report-viewer.html) locally in your browser and load the JSON report. The viewer runs entirely on your machine with no upload or third-party scripts.
 
 **Want to compare candidate evidence visually?** Save a plan with `llmrig plan OWNER/MODEL --json > plan.json`, then open the [offline Plan Explorer](https://github.com/sunilteja93/llmrig/blob/main/docs/plan-explorer.html) locally and load that JSON file. This is a viewer for actual planner evidence, not a live machine simulator.
+
+## Verified local execution
+
+[![Two actual completed LLMRig verification runs, illustrated from local receipts](assets/verified-dual-runtime.svg)](docs/VERIFIED_DEMOS.md)
+
+*Illustration reconstructed from measured local reports, not a raw screenshot
+or independent attestation. Missing metrics are not estimated. The two models
+cannot be compared as a controlled runtime speed test.*
+
+The [offline Rig Report viewer](docs/rig-report-viewer.html) renders real
+user-generated JSON reports locally. After your own successful
+`llmrig run`, generate `llmrig report --json --output rig-report.json`,
+open the viewer in a local browser and click **View report** to produce
+a shareable, inspectable card.
 
 ## Why LLMRig
 
@@ -75,11 +113,16 @@ discovery metadata != installation trust
 ## Quickstart
 
 ```bash
-pipx install llmrig          # or: python -m pip install llmrig
-llmrig solve MODEL           # inspect evidence; change nothing
+pipx install 'git+https://github.com/sunilteja93/llmrig.git@main'
+llmrig runtimes              # inspect which local runtimes are ready
 llmrig plan MODEL            # build a deterministic read-only plan
-llmrig run MODEL             # approve → apply → verify
+llmrig run MODEL             # approve supported actions, then verify
 ```
+
+The `@main` install is a moving unreleased source version. For a
+reproducible installation, pin a Git commit SHA as shown in
+[INSTALL.md](docs/INSTALL.md). The currently published PyPI version
+may have a different command set.
 
 `solve` and `plan` are read-only. Downloads, runtime starts, model loads, and other mutations require explicit approval. For non-interactive automation, use `--yes` only when that intent is deliberate.
 
@@ -209,30 +252,23 @@ The SDK prints nothing and never exits the process. `SolveResult` and `SolveCand
 
 ## Installation
 
-[`pipx`](https://pipx.pypa.io/) is recommended:
+For the currently verified Autopilot workflow, install from GitHub `main`
+using [pipx](https://pipx.pypa.io/) or a clean virtual environment:
 
 ```bash
-pipx install llmrig
-llmrig --version
+pipx install 'git+https://github.com/sunilteja93/llmrig.git@main'
+llmrig --help
+llmrig runtimes
 ```
 
-Upgrade with `pipx upgrade llmrig`, or use a virtual environment:
+This source install is **not the same thing as the latest PyPI release**.
+PyPI users can install `pipx install llmrig`, but should check
+`llmrig --help` for the published command set. The source workflow
+will become the default PyPI recommendation after a tested release.
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install llmrig
-```
-
-Windows PowerShell:
-
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install llmrig
-```
-
-Python 3.9+ on macOS, Linux, and Windows. Hugging Face Hub support is included for exact, revision-pinned artifact acquisition.
+For macOS, Linux, Windows PowerShell, pinned commits, PATH issues,
+corrupted editable installs and safe oMLX API-key setup, follow
+[**the full installation guide**](docs/INSTALL.md).
 
 ## Architecture
 
@@ -257,6 +293,8 @@ The north star is **Detect → Decide → Configure → Run → Verify**, with e
 
 - [`CHANGELOG.md`](https://github.com/sunilteja93/llmrig/blob/main/CHANGELOG.md) — canonical release history
 - [`ROADMAP_V1.md`](https://github.com/sunilteja93/llmrig/blob/main/ROADMAP_V1.md) — product direction
+- [`docs/INSTALL.md`](docs/INSTALL.md) — clean install and source/release distinction
+- [`docs/VERIFIED_DEMOS.md`](docs/VERIFIED_DEMOS.md) — real oMLX and Ollama verification transcripts
 - [`RELEASING.md`](https://github.com/sunilteja93/llmrig/blob/main/RELEASING.md) — GitHub Release and PyPI process
 - [`SECURITY.md`](https://github.com/sunilteja93/llmrig/blob/main/SECURITY.md) — security policy and trust boundaries
 - [`CONTRIBUTING.md`](https://github.com/sunilteja93/llmrig/blob/main/CONTRIBUTING.md) — contribution guide
