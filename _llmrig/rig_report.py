@@ -5,6 +5,7 @@ We never serialize raw receipt payloads, local paths, secrets or endpoints.
 """
 from __future__ import annotations
 
+import html
 import json
 import math
 import re
@@ -94,15 +95,21 @@ def build_share_report(receipt: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _markdown_value(value: Any) -> str:
+    """Avoid treating receipt-controlled text as Markdown or HTML markup."""
+    escaped = html.escape(str(value), quote=True)
+    return re.sub(r"([\\\x60*_{}\[\]()#+.!|])", r"\\\1", escaped)
+
+
 def format_markdown(report: Mapping[str, Any]) -> str:
     """Render only whitelisted report fields, with no private machine claims."""
     lines = [
         "# LLMRig Rig Report",
         "",
-        "**Model:** " + report["model"],
-        "**Runtime:** " + report["runtime"],
-        "**Format:** " + report["artifact_format"],
-        "**Status:** " + report["status"],
+        "**Model:** " + _markdown_value(report["model"]),
+        "**Runtime:** " + _markdown_value(report["runtime"]),
+        "**Format:** " + _markdown_value(report["artifact_format"]),
+        "**Status:** " + _markdown_value(report["status"]),
     ]
     for key, title in (
         ("quantization", "Quantization"),
@@ -110,14 +117,14 @@ def format_markdown(report: Mapping[str, Any]) -> str:
         ("context_tokens", "Context tokens"),
     ):
         if report.get(key) is not None:
-            lines.append("**" + title + ":** " + str(report[key]))
+            lines.append("**" + title + ":** " + _markdown_value(report[key]))
     lines.append("")
     verification = report.get("verification")
     if verification:
         lines.extend([
             "## Measured verification",
             "",
-            "**Method:** " + str(verification["method"]),
+            "**Method:** " + _markdown_value(verification["method"]),
             "**Measured runs:** " + str(verification["runs"]),
         ])
         for key, label, unit in (
