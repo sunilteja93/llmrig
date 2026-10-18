@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
-  <title id="title">LLMRig v0.9 — Autopilot for local AI</title>
-  <desc id="desc">Minimal monochrome product hero showing LLMRig's verified local AI workflow.</desc>
+  <title id="title">LLMRig — Plan, run and verify local AI</title>
+  <desc id="desc">Illustrative LLMRig workflow and a documented real MLX-LM benchmark observation; no implied successful Autopilot deployment.</desc>
 
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1600" y2="900" gradientUnits="userSpaceOnUse">
@@ -27,9 +27,9 @@
   <!-- Header -->
   <g transform="translate(92 82)">
     <text class="sans muted" x="0" y="0" font-size="17" font-weight="650" letter-spacing="6">LLMRIG</text>
-    <text class="sans white" x="0" y="122" font-size="132" font-weight="760" letter-spacing="-6">v0.9</text>
-    <text class="sans white" x="0" y="175" font-size="31" font-weight="520" letter-spacing="7">AUTOPILOT FOR LOCAL AI</text>
-    <text class="sans soft" x="0" y="221" font-size="20" font-weight="430">Plan. Approve. Apply. Verify. Remember.</text>
+    <text class="sans white" x="0" y="122" font-size="132" font-weight="760" letter-spacing="-6">LOCAL</text>
+    <text class="sans white" x="0" y="175" font-size="31" font-weight="520" letter-spacing="7">AI · EVIDENCE FIRST</text>
+    <text class="sans soft" x="0" y="221" font-size="20" font-weight="430">Diagnose. Plan. Approve. Verify. Share.</text>
   </g>
 
   <!-- Meta -->
@@ -75,31 +75,31 @@
       <circle cx="28" cy="27" r="5.5" fill="#B8B8B8"/>
       <circle cx="49" cy="27" r="5.5" fill="#777777"/>
       <circle cx="70" cy="27" r="5.5" fill="#464646"/>
-      <text class="mono muted" x="765" y="33" font-size="13" text-anchor="end">llmrig · v0.9</text>
+      <text class="mono muted" x="765" y="33" font-size="13" text-anchor="end">llmrig · workflow</text>
 
       <g transform="translate(30 92)">
-        <text class="mono white" x="0" y="0" font-size="16">$ llmrig run mlx-community/Qwen3-0.6B-4bit</text>
+        <text class="mono white" x="0" y="0" font-size="16">$ llmrig doctor OWNER/MODEL</text>
 
-        <text class="mono soft" x="0" y="44" font-size="15">setup</text>
-        <text class="mono white" x="100" y="44" font-size="15">mlx-lm · MLX</text>
+        <text class="mono soft" x="0" y="44" font-size="15">mode</text>
+        <text class="mono white" x="100" y="44" font-size="15">read-only diagnosis</text>
 
-        <text class="mono soft" x="0" y="75" font-size="15">policy</text>
-        <text class="mono white" x="100" y="75" font-size="15">unique minimal-change path</text>
+        <text class="mono soft" x="0" y="75" font-size="15">result</text>
+        <text class="mono white" x="100" y="75" font-size="15">explain evidence and blockers</text>
 
         <line x1="0" y1="108" x2="746" y2="108" class="hair"/>
 
-        <text class="mono soft" x="0" y="151" font-size="15">acquire_artifact</text>
-        <text class="mono white" x="205" y="151" font-size="15">completed</text>
+        <text class="mono soft" x="0" y="151" font-size="15">llmrig plan</text>
+        <text class="mono white" x="205" y="151" font-size="15">no changes</text>
 
-        <text class="mono soft" x="0" y="182" font-size="15">load_model</text>
-        <text class="mono white" x="205" y="182" font-size="15">completed</text>
+        <text class="mono soft" x="0" y="182" font-size="15">llmrig run</text>
+        <text class="mono white" x="205" y="182" font-size="15">approval required</text>
 
-        <text class="mono soft" x="0" y="213" font-size="15">verify</text>
-        <text class="mono white" x="205" y="213" font-size="15">completed</text>
+        <text class="mono soft" x="0" y="213" font-size="15">llmrig report</text>
+        <text class="mono white" x="205" y="213" font-size="15">opt-in, local only</text>
 
         <line x1="0" y1="246" x2="746" y2="246" class="hair"/>
 
-        <text class="sans muted" x="0" y="282" font-size="12" font-weight="650" letter-spacing="2">MEASURED VERIFICATION</text>
+        <text class="sans muted" x="0" y="282" font-size="12" font-weight="650" letter-spacing="2">DOCUMENTED MLX-LM BENCHMARK (QWEN3 0.6B)</text>
 
         <text class="mono white" x="0" y="324" font-size="22">560.85 tok/s</text>
         <text class="sans muted" x="0" y="348" font-size="11" font-weight="650" letter-spacing="1.5">GENERATION</text>
