@@ -134,6 +134,95 @@ class RescueAbTests(unittest.TestCase):
         self.assertEqual(result["observed_comparison"]["candidate_minus_baseline_pass_rate"], -0.3333)
         self.assertEqual(result["recommendation"], "no_verified_configuration_improvement")
 
+    def test_real_hardware_pattern_separates_timeout_from_fix_evidence(self):
+        """Regression for measured 4K timeouts and 8K explanation-only miss."""
+        def trial(model, context, task, seconds):
+            checks = {
+                "read_tool_completed": True,
+                "bug_explained": True,
+                "correct_return_proposed": True,
+                "no_disallowed_tool_observed": True,
+                "no_error_event": True,
+                "valid_event_stream": True,
+                "process_exit_zero": True,
+                "fixture_unchanged": True,
+            }
+            failure = None
+            if context == 4096:
+                failure = "agent_timeout"
+                checks["process_exit_zero"] = False
+            elif task.task_id == "nonnegative-clamp-v1":
+                failure = "task_requirements_not_met"
+                checks["bug_explained"] = False
+            return {
+                "task_id": task.task_id,
+                "context_tokens": context,
+                "status": "failed" if failure else "passed",
+                "failure_category": failure,
+                "checks": checks,
+            }
+
+        with mock.patch.object(rescue_ab.shutil, "which", return_value="/usr/bin/opencode"), \
+             mock.patch.object(rescue_ab, "_trial", side_effect=trial):
+            report = rescue_ab.compare("qwen3.8:27b-mlx", 4096, 8192, repeats=1)
+
+        self.assertEqual(report["status"], "completed")
+        baseline = report["summary"]["baseline"]
+        candidate = report["summary"]["candidate"]
+        self.assertEqual(baseline["observed_passes"], 0)
+        self.assertEqual(baseline["solution_evidence_seen"], 3)
+        self.assertEqual(baseline["process_exits_successful"], 0)
+        self.assertEqual(baseline["agent_timeouts"], 3)
+        self.assertEqual(baseline["explanation_rubric_only_misses"], 0)
+        self.assertEqual(candidate["observed_passes"], 2)
+        self.assertEqual(candidate["solution_evidence_seen"], 3)
+        self.assertEqual(candidate["process_exits_successful"], 3)
+        self.assertEqual(candidate["agent_timeouts"], 0)
+        self.assertEqual(candidate["explanation_rubric_only_misses"], 1)
+        self.assertEqual(
+            report["observed_comparison"]["candidate_minus_baseline_solution_evidence"],
+            0,
+        )
+        self.assertEqual(
+            report["observed_comparison"]["candidate_minus_baseline_successful_exits"],
+            3,
+        )
+        self.assertEqual(report["recommendation"], "no_verified_configuration_improvement")
+        outer = {
+            "mode": "measured_agent_ab", "agent_executable_detected": True,
+            "agent": "opencode", "model": "qwen3.8:27b-mlx",
+            "context_tokens": 4096, "status": "agent_ab_completed",
+            "unknowns": [], "blockers": [], "comparison": None, "probes": [],
+            "agent_ab_evaluation": report,
+        }
+        output = rescue.format_terminal(outer)
+        self.assertIn("Baseline context 4096: 0/3 strict completed tasks passed", output)
+        self.assertIn("Fix evidence observed: 3/3", output)
+        self.assertIn("Successful process exits: 0; timeouts: 3", output)
+        self.assertIn("Explanation-only rubric misses: 1", output)
+        self.assertIn("Evidence: exploratory small sample", output)
+
+    def test_disallowed_or_invalid_evidence_does_not_count_solution(self):
+        def trial(model, context, task, seconds):
+            checks = {
+                "read_tool_completed": True,
+                "correct_return_proposed": True,
+                "valid_event_stream": True,
+                "no_disallowed_tool_observed": context != 4096,
+                "fixture_unchanged": True,
+                "process_exit_zero": context != 4096,
+            }
+            return {
+                "task_id": task.task_id, "context_tokens": context,
+                "status": "failed", "checks": checks,
+                "failure_category": "task_requirements_not_met",
+            }
+        with mock.patch.object(rescue_ab.shutil, "which", return_value="/usr/bin/opencode"), \
+             mock.patch.object(rescue_ab, "_trial", side_effect=trial):
+            result = rescue_ab.compare("qwen3.8:27b-mlx", 4096, 8192, repeats=1)
+        self.assertEqual(result["summary"]["baseline"]["solution_evidence_seen"], 0)
+        self.assertEqual(result["summary"]["candidate"]["solution_evidence_seen"], 3)
+
     def test_violation_stops_remaining_agent_sessions(self):
         calls = []
         def violation(model, context, task, seconds):
