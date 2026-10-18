@@ -40,6 +40,11 @@ def _configuration(model: str, context: int) -> Dict[str, Any]:
     """Explicit local provider plus deny-by-default read-only agent."""
     permissions = {
         "*": "deny",
+        "bash": "deny",
+        "edit": "deny",
+        "webfetch": "deny",
+        "websearch": "deny",
+        "task": "deny",
         "read": "allow",
         "glob": "allow",
         "grep": "allow",
@@ -177,6 +182,7 @@ def _invoke(cmd: List[str], cwd: Path, env: Dict[str, str], seconds: int
                 process.kill()
             process.wait()
             returncode = process.returncode
+        output.seek(0, os.SEEK_END)
         length = output.tell()
         output.seek(0)
         bounded = output.read(MAX_CAPTURE + 1)
