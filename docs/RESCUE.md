@@ -1,9 +1,9 @@
 # LLMRig Rescue: protocol preflight (experimental)
 
-**Status:** experimental implementation merged to `main`, not part of the
-published PyPI v0.10.0 artifact. Install from source to try it.
-It includes an opt-in, real OpenCode coding-task evaluator, but is **not**
-an autonomous OpenCode repair engine.
+**Status:** Rescue ships in the published LLMRig v0.11.0 release on PyPI
+and is available on `main`. It remains **experimental** and includes an
+opt-in, real OpenCode coding-task evaluator, but is **not** an autonomous
+OpenCode repair engine.
 
 ## What this version actually does
 
@@ -26,10 +26,12 @@ an autonomous OpenCode repair engine.
 
 ## Run a preflight with NO inference
 
-Install the current feature branch in an isolated development environment;
-the published `pipx install llmrig` release does not yet contain Rescue.
+Install or upgrade the published LLMRig package with `pipx` and confirm
+you have v0.11.0 or newer before running Rescue:
 
 ```bash
+pipx install llmrig  # existing installs: pipx upgrade llmrig
+llmrig --version
 llmrig rescue --agent opencode --model qwen3.8:27b-mlx
 ```
 
