@@ -165,8 +165,17 @@ than the total budget. No user project is opened, and no persistent model or
 agent configuration is changed. The tool never runs without `--ab-test`.
 
 The result includes every task ID, context, repeated-trial index, pass/fail,
-whitelisted check booleans, elapsed seconds and any failure category. It
-also shows simple aggregate success proportions and the observed difference.
+whitelisted check booleans, elapsed seconds and any failure category.
+It also separates **strict completed task passes** from **correction evidence
+seen in the agent response**, **successful process exits**, **agent timeouts**,
+and **explanation-only rubric misses**. A task that produced the correct
+answer but timed out remains a failed *completed task*, without being
+misrepresented as an incorrect answer. Correction evidence uses a narrow
+text-based rubric, so it is not independent execution of a proposed fix.
+
+The A/B comparison uses strict completed-task success for its existing
+headline and reports separate observed differences in termination and
+correction evidence. None of these imply statistically reliable improvement.
 An incomplete run (time budget exhausted, OpenCode missing or a policy
 boundary violation) is **not** presented as a valid comparison. A boundary
 violation stops subsequent tasks.

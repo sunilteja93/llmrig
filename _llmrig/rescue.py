@@ -395,8 +395,23 @@ def format_terminal(report: Dict[str, Any]) -> str:
             lines.append(
                 name.capitalize() + " context " + str(group["context_tokens"]) +
                 ": " + str(group["observed_passes"]) + "/" +
-                str(group["observed_trials"]) + " fixed coding tasks passed"
+                str(group["observed_trials"]) + " strict completed tasks passed"
             )
+            if "solution_evidence_seen" in group:
+                lines.append(
+                    "  Fix evidence observed: " + str(group["solution_evidence_seen"]) +
+                    "/" + str(group["observed_trials"]) +
+                    " (may include timed-out agent responses)"
+                )
+                lines.append(
+                    "  Successful process exits: " +
+                    str(group["process_exits_successful"]) +
+                    "; timeouts: " + str(group["agent_timeouts"])
+                )
+                lines.append(
+                    "  Explanation-only rubric misses: " +
+                    str(group["explanation_rubric_only_misses"])
+                )
         if comparison["observed_comparison"]:
             lines.append("Observed A/B: " + comparison["observed_comparison"]["assessment"])
         lines.append("Evidence: exploratory small sample, not statistically validated")
