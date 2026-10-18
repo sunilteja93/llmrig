@@ -10,7 +10,7 @@ from unittest import mock
 
 from _llmrig import cli
 from _llmrig.guidance import diagnosis, next_steps
-from _llmrig.rig_report import build_share_report, format_markdown
+from _llmrig.rig_report import build_share_report, format_markdown, format_terminal
 
 
 def receipt():
@@ -62,6 +62,29 @@ class RigReportTests(unittest.TestCase):
         markdown = format_markdown(build_share_report(edited))
         self.assertNotIn("<img", markdown)
         self.assertIn("&lt;img", markdown)
+
+    def test_missing_throughput_is_explicit_not_fabricated(self):
+        only_latency = receipt()
+        only_latency["verification"]["generation_tps"] = None
+        only_latency["verification"]["prompt_eval_tps"] = None
+        only_latency["verification"]["total_latency_s"] = 0.29
+        report = build_share_report(only_latency)
+        self.assertIsNone(report["verification"]["generation_tps"])
+        self.assertIsNone(report["verification"]["prompt_eval_tps"])
+        self.assertEqual(report["verification"]["total_latency_s"], 0.29)
+        markdown = format_markdown(report)
+        terminal = format_terminal(report)
+        self.assertIn("Unavailable throughput", markdown)
+        self.assertIn("not inferred from total latency", markdown)
+        self.assertIn("Reported latency: 0.29 s", terminal)
+        self.assertIn("not inferred from latency", terminal)
+
+    def test_complete_throughput_has_no_missing_metric_warning(self):
+        complete = receipt()
+        complete["verification"]["prompt_eval_tps"] = 100.0
+        report = build_share_report(complete)
+        self.assertNotIn("Unavailable throughput", format_markdown(report))
+        self.assertNotIn("one or more speeds not recorded", format_terminal(report))
 
     def test_report_routes_from_cli_without_legacy_import(self):
         with mock.patch.object(cli, "load_receipt", return_value=receipt()):
