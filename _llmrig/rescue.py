@@ -236,7 +236,8 @@ def measure(base: str, model: str, context: int, runs: int,
 
 def rescue(agent: str, model: str, context: int, runs: int,
            compare_context: Optional[int], probe: bool, agent_test: bool = False,
-           agent_timeout: int = 120) -> Dict[str, Any]:
+           agent_timeout: int = 120, ab_test: bool = False,
+           ab_repeats: int = 2, ab_budget: int = 600) -> Dict[str, Any]:
     if agent != "opencode":
         raise RescueError("only the opencode preflight adapter is supported")
     model = validate_model(model)
@@ -249,15 +250,50 @@ def rescue(agent: str, model: str, context: int, runs: int,
         or not 256 <= compare_context <= 262144 or compare_context == context
     ):
         raise RescueError("--compare-context must differ and be between 256 and 262144")
-    if compare_context is not None and not probe:
-        raise RescueError("--compare-context requires explicit --probe")
-    if agent_test and (probe or compare_context is not None):
-        raise RescueError("--agent-test is separate from --probe/--compare-context")
+    if ab_test and (probe or agent_test or compare_context is None):
+        raise RescueError("--ab-test requires --compare-context and cannot combine with --probe or --agent-test")
+    if compare_context is not None and not (probe or ab_test):
+        raise RescueError("--compare-context requires explicit --probe or --ab-test")
+    if agent_test and (probe or compare_context is not None or ab_test):
+        raise RescueError("--agent-test is separate from --probe/--compare-context/--ab-test")
     if isinstance(agent_timeout, bool) or not isinstance(agent_timeout, int) or not 20 <= agent_timeout <= 180:
         raise RescueError("--agent-timeout must be between 20 and 180 seconds")
     base = local_host()
     report = preflight(agent, model, context, base)
     if report["status"] != "ready_for_probe":
+        return report
+    if ab_test:
+        if not report["agent_executable_detected"]:
+            report["status"] = "blocked"
+            report["blockers"].append("OpenCode executable not detected; no A/B evaluation attempted")
+            return report
+        from .rescue_ab import compare
+        try:
+            ab = compare(
+                model, context, compare_context, repeats=ab_repeats,
+                seconds=agent_timeout, budget_seconds=ab_budget,
+            )
+        except ValueError as exc:
+            raise RescueError(str(exc))
+        report["mode"] = "measured_agent_ab"
+        report["scope"] = (
+            "Exploratory A/B evaluation of three fixed read-only OpenCode tasks "
+            "in independent disposable workspaces; not autonomous repair"
+        )
+        report["unknowns"] = [
+            item for item in report["unknowns"]
+            if item != "OpenCode tool execution and task completion have not been tested"
+        ]
+        report["agent_ab_evaluation"] = ab
+        report["status"] = "agent_ab_completed" if ab["status"] == "completed" else "agent_ab_incomplete"
+        report["local_changes"] = (
+            "Disposable workspaces and isolated agent state only; no user project "
+            "or persistent model configuration intentionally modified"
+        )
+        report["unknowns"].append(
+            "This small synthetic suite does not validate statistical significance, "
+            "long-context robustness, or an actual repaired configuration"
+        )
         return report
     if agent_test:
         if not report["agent_executable_detected"]:
@@ -325,7 +361,9 @@ def rescue(agent: str, model: str, context: int, runs: int,
 
 def format_terminal(report: Dict[str, Any]) -> str:
     mode = report.get("mode")
-    if mode == "measured_agent_task":
+    if mode == "measured_agent_ab":
+        heading = "LLMRig Rescue | Exploratory OpenCode A/B evaluation"
+    elif mode == "measured_agent_task":
         heading = "LLMRig Rescue | OpenCode coding-task evaluation"
     elif mode == "measured_protocol_probe":
         heading = "LLMRig Rescue | Ollama tool-call canary"
@@ -349,6 +387,20 @@ def format_terminal(report: Dict[str, Any]) -> str:
             " synthetic tool calls passed"
         )
         lines.append("Outcomes: " + ", ".join(item["outcomes"]))
+    if report.get("agent_ab_evaluation"):
+        comparison = report["agent_ab_evaluation"]
+        lines.append("A/B suite: " + comparison["status"])
+        for name in ("baseline", "candidate"):
+            group = comparison["summary"][name]
+            lines.append(
+                name.capitalize() + " context " + str(group["context_tokens"]) +
+                ": " + str(group["observed_passes"]) + "/" +
+                str(group["observed_trials"]) + " fixed coding tasks passed"
+            )
+        if comparison["observed_comparison"]:
+            lines.append("Observed A/B: " + comparison["observed_comparison"]["assessment"])
+        lines.append("Evidence: exploratory small sample, not statistically validated")
+        lines.append("No repair was attempted and no configuration was applied.")
     if report.get("agent_evaluation"):
         evaluation = report["agent_evaluation"]
         lines.append("Agent coding task: " + evaluation["status"])
@@ -362,8 +414,8 @@ def format_terminal(report: Dict[str, Any]) -> str:
         lines.append("Confidence: insufficient to establish agent improvement")
     for item in report["unknowns"]:
         lines.append("Unknown: " + item)
-    if report.get("agent_evaluation"):
-        lines.append("OpenCode ran in a disposable project; this is not an OS sandbox.")
+    if report.get("agent_evaluation") or report.get("agent_ab_evaluation"):
+        lines.append("OpenCode ran in disposable projects; this is not an OS sandbox.")
     else:
         lines.append("No OpenCode configuration was read or changed.")
     return "\n".join(lines) + "\n"

@@ -135,12 +135,64 @@ not automatically change OpenCode's configuration, run arbitrary coding
 projects, or prove a repair. Subsequent phases will add versioned
 tasks, explicit counterfactual configurations and comparison evidence.
 
+## Experimental A/B coding-task verification
+
+LLMRig can run an **opt-in exploratory A/B trial** using three fixed read-only
+debugging tasks with objective, deterministic graders:
+
+1. Parity predicate accidentally detects odd instead of even.
+2. Nonnegative clamp inadvertently negates its input.
+3. Prefix check accidentally uses `endswith`.
+
+The same installed Ollama model runs in isolated temporary OpenCode sessions
+with two *declared* context allocations. Each task is repeated for both
+configurations, alternating execution order between tasks and repeats to
+reduce basic warmup and order bias.
+
+```bash
+llmrig rescue --agent opencode --model qwen3.8:27b-mlx \
+  --context 4096 --compare-context 8192 \
+  --ab-test --ab-repeats 2 \
+  --agent-timeout 90 --ab-budget 600 \
+  --output rescue-ab.json
+```
+
+**Runtime cost:** The default experiment invokes 12 OpenCode sessions
+(3 tasks × 2 contexts × 2 repeats). Each session can execute inference, and
+the A/B run has a 600-second total budget by default. A run in progress
+uses at most its assigned individual session timeout, which can be shorter
+than the total budget. No user project is opened, and no persistent model or
+agent configuration is changed. The tool never runs without `--ab-test`.
+
+The result includes every task ID, context, repeated-trial index, pass/fail,
+whitelisted check booleans, elapsed seconds and any failure category. It
+also shows simple aggregate success proportions and the observed difference.
+An incomplete run (time budget exhausted, OpenCode missing or a policy
+boundary violation) is **not** presented as a valid comparison. A boundary
+violation stops subsequent tasks.
+
+**Very important limitations:** The two OpenCode settings change the context
+*advertised in the agent's local provider config*. This does not independently
+verify Ollama's actual effective `num_ctx` allocation, so the experiment
+does not establish true context-size effects. Prompts are intentionally
+short and do not stress long-context capacity. The fixed tiny tasks are
+not representative coding benchmarks, and repeated results from one
+machine do not establish statistical significance. LLMRig **never**
+automatically selects a winner, changes the real agent configuration,
+or claims to have repaired an agent based on these small comparisons.
+
+Temporary homes and restrictive tool policy reduce exposure but do not
+constitute an operating-system sandbox. OpenCode is still a real
+third-party executable running with the invoking user's privileges.
+Results are stored locally and raw agent output is never included
+in reports.
+
 ## What still needs to be built for the full Rescue vision
 
 **Do not present this feature as a repaired coding agent.** The next phases are:
 
-1. Additional versioned OpenCode tasks and independent, multi-run reliability
-   measurements beyond the initial parity diagnostic.
+1. Representative larger agent tasks and independent reliability studies,
+   beyond the current three-task exploratory A/B harness.
 2. Versioned code-edit tasks with independently checked outputs and a
    true baseline-versus-candidate task success comparison.
 3. Supported reversible configuration changes with approval, restore

@@ -208,9 +208,21 @@ def _rescue_parser() -> argparse.ArgumentParser:
     parser.add_argument("--context", type=int, default=4096)
     parser.add_argument(
         "--compare-context", type=int, default=None,
-        help="Run a second measured context configuration; requires --probe.",
+        help="Compare a second context; requires --probe or --ab-test.",
     )
     parser.add_argument("--runs", type=int, default=3, help="Canary trials per context (1-5).")
+    parser.add_argument(
+        "--ab-test", action="store_true",
+        help="Opt into a fixed 3-task OpenCode A/B comparison (no config changes).",
+    )
+    parser.add_argument(
+        "--ab-repeats", type=int, default=2,
+        help="Repeated trials per task and context in A/B (1-3, default 2).",
+    )
+    parser.add_argument(
+        "--ab-budget", type=int, default=600,
+        help="Total A/B wall-clock budget in seconds (120-1200).",
+    )
     parser.add_argument(
         "--agent-test", action="store_true",
         help="Explicitly run one read-only OpenCode coding task in a disposable project.",
@@ -238,6 +250,7 @@ def command_rescue(args: argparse.Namespace) -> int:
             args.agent, args.model, args.context, args.runs,
             args.compare_context, args.probe,
             agent_test=args.agent_test, agent_timeout=args.agent_timeout,
+            ab_test=args.ab_test, ab_repeats=args.ab_repeats, ab_budget=args.ab_budget,
         )
     except RescueError as exc:
         print("llmrig rescue: " + str(exc), file=sys.stderr)
@@ -260,9 +273,9 @@ def command_rescue(args: argparse.Namespace) -> int:
         print("Rescue report saved locally. No report was uploaded.")
     else:
         print(payload, end="") if args.json else print(format_terminal(report), end="")
-    if report["status"] == "agent_task_failed":
+    if report["status"] in ("agent_task_failed", "agent_ab_incomplete"):
         return 1
-    return 0 if report["status"] in ("ready_for_probe", "measured", "agent_task_passed") else 2
+    return 0 if report["status"] in ("ready_for_probe", "measured", "agent_task_passed", "agent_ab_completed") else 2
 
 
 def _build_plan(model: str, context: Optional[int], legacy: object) -> AutopilotExecutionPlan:
@@ -651,6 +664,7 @@ def _print_augmented_help() -> int:
     print("  rescue --agent opencode --model MODEL")
     print("                       Read-only preflight; --probe opts into bounded inference.")
     print("                       --agent-test opts into one disposable OpenCode task.")
+    print("                       --ab-test compares fixed tasks at two contexts.")
     return 0
 
 
