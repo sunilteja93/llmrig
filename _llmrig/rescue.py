@@ -238,7 +238,8 @@ def rescue(agent: str, model: str, context: int, runs: int,
            compare_context: Optional[int], probe: bool, agent_test: bool = False,
            agent_timeout: int = 120, ab_test: bool = False,
            ab_repeats: int = 2, ab_budget: int = 600,
-           agent_steps: Optional[int] = None) -> Dict[str, Any]:
+           agent_steps: Optional[int] = None,
+           agent_no_auto_compact: bool = False) -> Dict[str, Any]:
     if agent != "opencode":
         raise RescueError("only the opencode preflight adapter is supported")
     model = validate_model(model)
@@ -259,6 +260,8 @@ def rescue(agent: str, model: str, context: int, runs: int,
         raise RescueError("--agent-test is separate from --probe/--compare-context/--ab-test")
     if isinstance(agent_timeout, bool) or not isinstance(agent_timeout, int) or not 20 <= agent_timeout <= 180:
         raise RescueError("--agent-timeout must be between 20 and 180 seconds")
+    if agent_no_auto_compact and not agent_test:
+        raise RescueError("--agent-no-auto-compact requires explicit --agent-test")
     if agent_steps is not None:
         if not agent_test:
             raise RescueError("--agent-steps requires explicit --agent-test")
@@ -309,12 +312,15 @@ def rescue(agent: str, model: str, context: int, runs: int,
             return report
         from .rescue_agent import evaluate
         try:
-            if agent_steps is None:
+            if agent_steps is None and not agent_no_auto_compact:
                 agent_result = evaluate(model, context, seconds=agent_timeout)
             else:
-                agent_result = evaluate(
-                    model, context, seconds=agent_timeout, agent_steps=agent_steps
-                )
+                options = {}
+                if agent_steps is not None:
+                    options["agent_steps"] = agent_steps
+                if agent_no_auto_compact:
+                    options["disable_auto_compaction"] = True
+                agent_result = evaluate(model, context, seconds=agent_timeout, **options)
         except ValueError as exc:
             raise RescueError(str(exc))
         report["mode"] = "measured_agent_task"
@@ -431,6 +437,8 @@ def format_terminal(report: Dict[str, Any]) -> str:
     if report.get("agent_evaluation"):
         evaluation = report["agent_evaluation"]
         lines.append("Agent coding task: " + evaluation["status"])
+        if evaluation.get("auto_compaction_disabled"):
+            lines.append("Automatic context compaction: disabled in disposable OpenCode fixture")
         if evaluation.get("agent_steps_limit") is not None:
             lines.append(
                 "Configured agent step limit: " +
