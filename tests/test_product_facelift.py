@@ -69,6 +69,14 @@ class RigReportTests(unittest.TestCase):
                 self.assertEqual(cli.main(["report", "--json"]), 0)
         self.assertEqual(json.loads(output.getvalue())["project"], "LLMRig")
 
+    def test_report_default_is_local_terminal_summary(self):
+        args = argparse.Namespace(receipt="latest", json=False, share=False, output=None)
+        with mock.patch.object(cli, "load_receipt", return_value=receipt()):
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(cli.command_report(args), 0)
+        self.assertIn("To create a portable Markdown card", output.getvalue())
+        self.assertNotIn("# LLMRig Rig Report", output.getvalue())
+
     def test_report_rejects_private_model_identity(self):
         unsafe = receipt()
         unsafe["model"] = "/Users/private-user/model"
