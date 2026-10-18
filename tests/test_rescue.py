@@ -10,6 +10,8 @@ from unittest import mock
 
 from _llmrig import cli, rescue
 
+REAL_LOCAL_HOST = rescue.local_host
+
 
 def fake_api(base, endpoint, payload=None, timeout=8):
     if endpoint == "/api/version":
@@ -119,12 +121,12 @@ class RescueTests(unittest.TestCase):
                      "http://127.0.0.1:11434/foo", "http://user:pw@127.0.0.1:11434"]:
             with mock.patch.dict(os.environ, {"OLLAMA_HOST": host}), \
                  self.assertRaises(rescue.RescueError):
-                rescue.local_host()
+                REAL_LOCAL_HOST()
 
     def test_local_loopback_allowed(self):
         for host in ["127.0.0.1:11434", "http://localhost:11434"]:
             with mock.patch.dict(os.environ, {"OLLAMA_HOST": host}):
-                self.assertIn(":11434", rescue.local_host())
+                self.assertIn(":11434", REAL_LOCAL_HOST())
 
     def test_transport_error_is_failure_not_fabricated_success(self):
         def failing(base, endpoint, payload=None, timeout=8):
