@@ -19,8 +19,8 @@ promise of execution support.
 ## 2. Diagnose an exact model
 
 ~~~sh
-llmrig doctor mlx-community/Qwen3.5-27B-4bit
-llmrig plan mlx-community/Qwen3.5-27B-4bit
+llmrig doctor mlx-community/Qwen3-0.6B-4bit
+llmrig plan mlx-community/Qwen3-0.6B-4bit
 ~~~
 
 The first command is a brief read-only diagnosis; the second shows the full
@@ -35,7 +35,7 @@ assume a model's file naming proves it can be executed.
 ## 3. Approve the supported plan
 
 ~~~sh
-llmrig run mlx-community/Qwen3.5-27B-4bit
+llmrig run mlx-community/Qwen3-0.6B-4bit
 ~~~
 
 You see the proposed changes before any mutation. An interactive confirmation
