@@ -123,6 +123,60 @@ class GuidanceTests(unittest.TestCase):
         self.assertTrue(any("runtimes" in step for step in steps))
         self.assertEqual(diagnosis(plan)["status"], "blocked")
 
+    def test_selected_ready_path_ignores_alternative_candidate_warnings(self):
+        from types import SimpleNamespace
+
+        winner = SimpleNamespace(
+            candidate_id="selected-mlx",
+            blockers=(),
+            unknowns=(),
+        )
+        alternative = SimpleNamespace(
+            candidate_id="unselected-gguf",
+            blockers=("incompatible with available memory", "runtime not installed"),
+            unknowns=("artifact provenance unknown",),
+        )
+        plan = SimpleNamespace(
+            selected_candidate_id="selected-mlx",
+            candidates=(winner, alternative),
+            blockers=(),
+            blocked=False,
+            model="org/model",
+            plan_id="plan-2",
+        )
+        guidance = " ".join(next_steps(plan)).lower()
+        self.assertIn("review the planned actions", guidance)
+        self.assertNotIn("smaller", guidance)
+        self.assertNotIn("runtimes", guidance)
+        self.assertNotIn("repository", guidance)
+        self.assertEqual(diagnosis(plan)["status"], "ready_to_approve")
+
+    def test_selected_blocked_path_ignores_unselected_candidate(self):
+        from types import SimpleNamespace
+
+        winner = SimpleNamespace(
+            candidate_id="selected-mlx",
+            blockers=("runtime not ready",),
+            unknowns=(),
+        )
+        alternative = SimpleNamespace(
+            candidate_id="unselected-gguf",
+            blockers=("incompatible memory",),
+            unknowns=(),
+        )
+        plan = SimpleNamespace(
+            selected_candidate_id="selected-mlx",
+            candidates=(winner, alternative),
+            blockers=(),
+            blocked=True,
+            model="org/model",
+            plan_id="plan-3",
+        )
+        guidance = " ".join(next_steps(plan)).lower()
+        self.assertIn("runtimes", guidance)
+        self.assertNotIn("smaller", guidance)
+        self.assertEqual(diagnosis(plan)["status"], "blocked")
+
     def test_doctor_command_is_read_only(self):
         plan = mock.Mock()
         plan.model = "org/model"
