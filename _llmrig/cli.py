@@ -234,7 +234,7 @@ def command_rescue(args: argparse.Namespace) -> int:
         print("llmrig rescue: " + str(exc), file=sys.stderr)
         return 2
 
-    payload = json.dumps(report, indent=2) + "\\n"
+    payload = json.dumps(report, indent=2) + "\n"
     if args.output:
         try:
             with Path(args.output).open("x", encoding="utf-8") as dest:
@@ -633,7 +633,7 @@ def _print_augmented_help() -> int:
     print("  run MODEL           Plan, approve, apply, and verify in one workflow.")
     print("  doctor [MODEL]      Read-only diagnosis with actionable next steps.")
     print("  report [RECEIPT]    Privacy-filtered, shareable verification report.")
-    print("\\nRescue (initial protocol diagnostic):")
+    print("\nRescue (initial protocol diagnostic):")
     print("  rescue --agent opencode --model MODEL")
     print("                       Read-only preflight; --probe opts into bounded inference.")
     return 0
