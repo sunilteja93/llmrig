@@ -4245,6 +4245,7 @@ class OllamaExecutionAdapter:
             raise RuntimeError("Ollama service is unavailable")
         isolate_ollama_for_benchmark(self.host)
         timed = []
+        unreliable_prompt_samples = 0
         try:
             for _ in range(workload.warmup_runs):
                 ollama_generate(
@@ -4273,6 +4274,15 @@ class OllamaExecutionAdapter:
                 metrics["process_wall_seconds"] = round(time.perf_counter() - started, 4)
                 prompt_duration = metrics.get("prompt_eval_duration_s")
                 generation_duration = metrics.get("eval_duration_s")
+                # Microsecond-scale, often cache-reused prompt phases do not
+                # provide a robust throughput denominator. Preserve successful
+                # generation verification without claiming enormous prompt TPS.
+                if (
+                    metrics.get("prompt_tps") is not None
+                    and (prompt_duration is None or prompt_duration < 0.001)
+                ):
+                    metrics["prompt_tps"] = None
+                    unreliable_prompt_samples += 1
                 metrics["wall_seconds"] = (
                     round(prompt_duration + generation_duration, 4)
                     if prompt_duration is not None and generation_duration is not None
@@ -4313,7 +4323,10 @@ class OllamaExecutionAdapter:
             generation_tps=(
                 round(sum(generation) / len(generation), 2) if generation else None
             ),
-            prompt_eval_tps=round(sum(prompt) / len(prompt), 2) if prompt else None,
+            prompt_eval_tps=(
+                round(sum(prompt) / len(prompt), 2)
+                if len(prompt) == len(timed) else None
+            ),
             total_latency_s=round(sum(latency) / len(latency), 4) if latency else None,
             generated_tokens=generated_tokens,
             measured_runs=len(timed),
@@ -4322,7 +4335,17 @@ class OllamaExecutionAdapter:
             latency_samples=len(latency),
             timestamp=now_iso(),
             evidence=evidence,
-            warnings=("performance measurement does not establish model quality",),
+            warnings=(
+                ("performance measurement does not establish model quality",)
+                + (
+                    (
+                        "Prompt throughput was not reported because at least one "
+                        "Ollama prompt-evaluation phase lasted under 1 ms; short "
+                        "or cached prompt phases cannot support a reliable TPS claim.",
+                    )
+                    if unreliable_prompt_samples else ()
+                )
+            ),
             raw_samples=tuple(dict(item) for item in timed),
         )
 
