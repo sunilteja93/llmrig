@@ -211,6 +211,8 @@ def evaluate(model: str, context: int, seconds: int = 120) -> Dict[str, Any]:
         "agent_invoked": False,
         "checks": {},
         "json_events_seen": 0,
+        "event_sequence": None,
+        "completion_diagnostic": None,
         "elapsed_seconds": None,
         "failure_category": None,
         "raw_agent_output_included": False,
@@ -250,12 +252,19 @@ def evaluate(model: str, context: int, seconds: int = 120) -> Dict[str, Any]:
         report["elapsed_seconds"] = round(time.monotonic() - start, 2)
         report["agent_invoked"] = True
         checks, count = _read_events(raw)
+        from .rescue_trace import summarize
+        report["event_sequence"] = summarize(raw, FIX)
         checks["process_exit_zero"] = code == 0 and not timed_out and status == "exited"
         checks["fixture_unchanged"] = fixture.is_file() and _sha(fixture.read_bytes()) == before
         report["checks"] = checks
         report["json_events_seen"] = count
         if timed_out:
             report["failure_category"] = "agent_timeout"
+            report["completion_diagnostic"] = (
+                "provisional_fix_observed_before_agent_timeout"
+                if checks["correct_return_proposed"] and checks["valid_event_stream"]
+                else "agent_timeout_without_verified_fix_evidence"
+            )
         elif status == "output_limit":
             report["failure_category"] = "event_output_limit"
         elif code != 0:
