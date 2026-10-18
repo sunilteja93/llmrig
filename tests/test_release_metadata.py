@@ -15,6 +15,18 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertIsNotNone(citation_match)
         self.assertEqual(citation_match.group(1), llmrig.VERSION)
         self.assertIn(f"## {llmrig.VERSION} - ", changelog)
+        if llmrig.VERSION == "0.10.0":
+            self.assertIn("date-released: 2026-10-18", citation)
+            readme = (root / "README.md").read_text(encoding="utf-8")
+            self.assertIn("pipx install llmrig", readme)
+            self.assertIn("docs/VERIFIED_DEMOS.md", readme)
+            self.assertTrue((root / "docs/RELEASE_NOTES_v0.10.0.md").exists())
+            release_workflow = (root / ".github/workflows/release-v0100-after-ci.yml").read_text(encoding="utf-8")
+            self.assertIn("VERIFIED_SHA", release_workflow)
+            self.assertIn("publish-to-pypi.yml", release_workflow)
+            cleanup_workflow = (root / ".github/workflows/cleanup-v0100-after-pypi.yml").read_text(encoding="utf-8")
+            self.assertIn("merged_at", cleanup_workflow)
+            self.assertIn("branch[\"commit\"][\"sha\"]", cleanup_workflow)
 
 
 if __name__ == "__main__":
