@@ -43,6 +43,8 @@ Reports do not upload or publish anything automatically. They omit local private
 
 Learn more in the [first-run guide](https://github.com/sunilteja93/llmrig/blob/main/docs/FIRST_RUN.md) and the [reproducible validation matrix](https://github.com/sunilteja93/llmrig/blob/main/docs/VALIDATION_MATRIX.md).
 
+**Installation broken?** See [Troubleshooting](https://github.com/sunilteja93/llmrig/blob/main/docs/TROUBLESHOOTING.md) for recovery from stale virtual environments and missing installed package metadata.
+
 **Want a visual card?** Open [the offline Rig Report viewer](https://github.com/sunilteja93/llmrig/blob/main/docs/rig-report-viewer.html) locally in your browser and load the JSON report. The viewer runs entirely on your machine with no upload or third-party scripts.
 
 **Want to compare candidate evidence visually?** Save a plan with `llmrig plan OWNER/MODEL --json > plan.json`, then open the [offline Plan Explorer](https://github.com/sunilteja93/llmrig/blob/main/docs/plan-explorer.html) locally and load that JSON file. This is a viewer for actual planner evidence, not a live machine simulator.
