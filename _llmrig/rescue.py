@@ -239,7 +239,9 @@ def rescue(agent: str, model: str, context: int, runs: int,
            agent_timeout: int = 120, ab_test: bool = False,
            ab_repeats: int = 2, ab_budget: int = 600,
            agent_steps: Optional[int] = None,
-           agent_no_auto_compact: bool = False) -> Dict[str, Any]:
+           agent_no_auto_compact: bool = False,
+           compaction_ab: bool = False,
+           compaction_repeats: int = 1) -> Dict[str, Any]:
     if agent != "opencode":
         raise RescueError("only the opencode preflight adapter is supported")
     model = validate_model(model)
@@ -252,6 +254,17 @@ def rescue(agent: str, model: str, context: int, runs: int,
         or not 256 <= compare_context <= 262144 or compare_context == context
     ):
         raise RescueError("--compare-context must differ and be between 256 and 262144")
+    if compaction_ab:
+        if (probe or ab_test or agent_test or compare_context is not None
+                or agent_steps is not None or agent_no_auto_compact):
+            raise RescueError(
+                "--compaction-ab is independent of --probe, --ab-test, "
+                "--compare-context, --agent-test and agent-specific flags"
+            )
+        if type(compaction_repeats) is not int or not 1 <= compaction_repeats <= 3:
+            raise RescueError("--compaction-repeats must be between 1 and 3")
+    elif compaction_repeats != 1:
+        raise RescueError("--compaction-repeats requires --compaction-ab")
     if ab_test and (probe or agent_test or compare_context is None):
         raise RescueError("--ab-test requires --compare-context and cannot combine with --probe or --agent-test")
     if compare_context is not None and not (probe or ab_test):
@@ -271,6 +284,42 @@ def rescue(agent: str, model: str, context: int, runs: int,
     base = local_host()
     report = preflight(agent, model, context, base)
     if report["status"] != "ready_for_probe":
+        return report
+    if compaction_ab:
+        if not report["agent_executable_detected"]:
+            report["status"] = "blocked"
+            report["blockers"].append("OpenCode executable not detected; no compaction A/B attempted")
+            return report
+        from .rescue_compaction_ab import compare_compaction
+        try:
+            compaction = compare_compaction(
+                model, context, repeats=compaction_repeats,
+                seconds=agent_timeout, budget_seconds=ab_budget,
+            )
+        except ValueError as exc:
+            raise RescueError(str(exc))
+        report["mode"] = "measured_compaction_ab"
+        report["scope"] = (
+            "Controlled alternating compaction-policy comparison on three "
+            "disposable read-only OpenCode fixtures; not a verified repair"
+        )
+        report["unknowns"] = [
+            x for x in report["unknowns"]
+            if x != "OpenCode tool execution and task completion have not been tested"
+        ]
+        report["compaction_ab_evaluation"] = compaction
+        report["status"] = (
+            "compaction_ab_completed" if compaction["status"] == "completed"
+            else "compaction_ab_incomplete"
+        )
+        report["local_changes"] = (
+            "Only temporary disposable OpenCode test configuration and agent state; "
+            "no persistent user settings deliberately changed"
+        )
+        report["unknowns"].append(
+            "No direct compaction events or per-request Ollama context were verified; "
+            "tiny tests cannot establish a causal or broadly safe mitigation"
+        )
         return report
     if ab_test:
         if not report["agent_executable_detected"]:
@@ -379,7 +428,9 @@ def rescue(agent: str, model: str, context: int, runs: int,
 
 def format_terminal(report: Dict[str, Any]) -> str:
     mode = report.get("mode")
-    if mode == "measured_agent_ab":
+    if mode == "measured_compaction_ab":
+        heading = "LLMRig Rescue | Controlled compaction A/B experiment"
+    elif mode == "measured_agent_ab":
         heading = "LLMRig Rescue | Exploratory OpenCode A/B evaluation"
     elif mode == "measured_agent_task":
         heading = "LLMRig Rescue | OpenCode coding-task evaluation"
@@ -405,6 +456,29 @@ def format_terminal(report: Dict[str, Any]) -> str:
             " synthetic tool calls passed"
         )
         lines.append("Outcomes: " + ", ".join(item["outcomes"]))
+    if report.get("compaction_ab_evaluation"):
+        experiment = report["compaction_ab_evaluation"]
+        lines.append("Compaction A/B: " + experiment["status"])
+        for name in ("baseline", "candidate"):
+            stats = experiment["groups"][name]
+            policy = "default" if name == "baseline" else "disabled"
+            lines.append(
+                "  Compaction " + policy + ": " + str(stats["strict_passes"]) +
+                "/" + str(stats["trials"]) + " strict task passes; "
+                + str(stats["process_exits"]) + " successful exits; "
+                + str(stats["timeouts"]) + " timeouts"
+            )
+            lines.append(
+                "    Correct-fix evidence: " + str(stats["fix_evidence"]) +
+                "; explanation-only rubric misses: " +
+                str(stats["explanation_only_rubric_misses"])
+            )
+        if experiment["observed_comparison"]:
+            lines.append(
+                "Observed A/B: " + experiment["observed_comparison"]["direction"]
+            )
+        lines.append("Evidence: exploratory, not causal or statistically validated")
+        lines.append("No automatic or global compaction changes were made.")
     if report.get("agent_ab_evaluation"):
         comparison = report["agent_ab_evaluation"]
         lines.append("A/B suite: " + comparison["status"])
@@ -471,7 +545,8 @@ def format_terminal(report: Dict[str, Any]) -> str:
         lines.append("Confidence: insufficient to establish agent improvement")
     for item in report["unknowns"]:
         lines.append("Unknown: " + item)
-    if report.get("agent_evaluation") or report.get("agent_ab_evaluation"):
+    if (report.get("agent_evaluation") or report.get("agent_ab_evaluation")
+            or report.get("compaction_ab_evaluation")):
         lines.append("OpenCode ran in disposable projects; this is not an OS sandbox.")
     else:
         lines.append("No OpenCode configuration was read or changed.")

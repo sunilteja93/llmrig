@@ -270,6 +270,47 @@ The report recommendation is always
 criterion is met. To investigate causality, perform independent alternating
 on/off trials with comparable budgets and multiple workloads.
 
+## Paired compaction A/B experiment (explicit opt-in)
+
+The next experiment after offline receipt triage is a controlled **on/off**
+comparison over the three fixed read-only coding tasks. At the **same**
+OpenCode-declared context and model, the tool alternates conditions in an
+A/B then B/A schedule, using fresh disposable workspaces and HOME state
+per session. The conditions differ solely in whether
+`compaction.auto: false` is explicitly set in the local fixture; baseline
+uses OpenCode's unspecified default.
+
+```bash
+llmrig rescue --agent opencode --model qwen3.8:27b-mlx \
+  --context 4096 --compaction-ab --compaction-repeats 1 \
+  --agent-timeout 90 --ab-budget 600 \
+  --output rescue-compaction-paired.json
+```
+
+One repeat means **6 agent sessions**, and two repeats means **12
+sessions**, which can take a long time. If selecting two repeats, increase
+`--ab-budget` to at least 1200 seconds when using a 90-second per-session
+limit. The runner checks before each pair that the remaining total budget
+can accommodate *both* full session timeouts; incomplete experiments are
+never reported as complete comparisons. No task is run without explicit
+`--compaction-ab`.
+
+Each outcome records task, compaction setting, pair number, test checks,
+process completion, provisional correct-fix evidence, failure category,
+and privacy-filtered event counts. The aggregate distinguishes actual
+completed passes from explanation-only rubric misses and timeouts. A
+single failing test is not silently converted to a success because the
+model proposed a correct statement.
+
+**Interpretation:** Alternating order and equal task budgets reduce simple
+confounds but do not independently observe compaction events or establish
+a causal root cause, actual Ollama per-request context, statistical
+significance, or safe generalization to long coding tasks. Raw model
+text and fixture paths are not retained. OpenCode runs with current user
+OS permissions; the disposable config and tool policy are *not* an OS
+sandbox. Regardless of outcome, LLMRig never applies a persistent
+compaction setting or automatically recommends disabling it globally.
+
 ## Experimental A/B coding-task verification
 
 LLMRig can run an **opt-in exploratory A/B trial** using three fixed read-only
