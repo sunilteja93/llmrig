@@ -116,7 +116,7 @@
       field(m,"Prompt evaluation",numeric(v.prompt_eval_tps," tok/s"));
       field(m,"Total latency",numeric(v.total_latency_s," s"));
       if(v.generation_tps===null||v.generation_tps===undefined||v.prompt_eval_tps===null||v.prompt_eval_tps===undefined){
-        missing.textContent="Throughput: "+(v.generation_tps==null&&v.prompt_eval_tps==null?"generation and prompt speeds were":"one or more speed metrics were")+" not reported by the runtime. LLMRig does not estimate tokens/s from latency.";
+        missing.textContent="Throughput: "+(v.generation_tps==null&&v.prompt_eval_tps==null?"generation and prompt speeds were":"one or more speed metrics were")+" not recorded in this receipt. LLMRig does not estimate tokens/s from latency.";
         missing.hidden=false;
       }
     }else {field(m,"Measurements","Not recorded");}
