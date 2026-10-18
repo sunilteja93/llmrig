@@ -136,6 +136,8 @@ def _trial(model: str, context: int, task: Task, seconds: int
         "status": "failed",
         "checks": {},
         "events_seen": 0,
+        "event_sequence": None,
+        "completion_diagnostic": None,
         "duration_seconds": None,
         "failure_category": None,
         "fixture_sha256": _sha(task.source.encode("utf-8")),
@@ -170,12 +172,19 @@ def _trial(model: str, context: int, task: Task, seconds: int
             return outcome
         outcome["duration_seconds"] = round(time.monotonic() - start, 2)
         checks, events = _grade_events(output, task, workspace)
+        from .rescue_trace import summarize
+        outcome["event_sequence"] = summarize(output, task.correction_pattern)
         checks["process_exit_zero"] = code == 0 and not timed_out and process_status == "exited"
         checks["fixture_unchanged"] = fixture.is_file() and _sha(fixture.read_bytes()) == original
         outcome["checks"] = checks
         outcome["events_seen"] = events
         if timed_out:
             outcome["failure_category"] = "agent_timeout"
+            outcome["completion_diagnostic"] = (
+                "provisional_fix_observed_before_agent_timeout"
+                if checks["correct_return_proposed"] and checks["valid_event_stream"]
+                else "agent_timeout_without_verified_fix_evidence"
+            )
         elif process_status == "output_limit":
             outcome["failure_category"] = "event_output_limit"
         elif code != 0:
