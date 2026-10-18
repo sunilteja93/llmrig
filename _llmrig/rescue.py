@@ -423,6 +423,22 @@ def format_terminal(report: Dict[str, Any]) -> str:
             lines.append("  " + name + ": " + ("passed" if passed else "failed"))
         if evaluation["failure_category"]:
             lines.append("Failure category: " + evaluation["failure_category"])
+        if evaluation.get("completion_diagnostic"):
+            lines.append("Completion diagnostic: " + evaluation["completion_diagnostic"])
+        sequence = evaluation.get("event_sequence")
+        if sequence:
+            lines.append(
+                "Event trace: " + str(sequence["events_seen"]) + " bounded events; " +
+                "first fix evidence at event " +
+                str(sequence["first_fix_evidence_event_index"]) +
+                "; subsequent events " + str(sequence["events_after_first_fix_evidence"])
+            )
+            counts = sequence["post_fix_event_type_counts"]
+            lines.append(
+                "After fix evidence: tool events " + str(counts["tool_use"]) +
+                "; step starts " + str(counts["step_start"]) +
+                "; step finishes " + str(counts["step_finish"])
+            )
         lines.append("Raw agent events were not included in the report.")
     if report["comparison"]:
         lines.append("Comparison: " + report["comparison"]["assessment"])
