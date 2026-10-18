@@ -96,7 +96,7 @@ class OfflineCompactionEvidenceTests(unittest.TestCase):
         self.assertEqual(result["baseline"]["legacy_compaction_policy_not_recorded"], 2)
         self.assertEqual(result["assessment"],
                          "repeated_mitigation_observed_not_causally_verified")
-        self.assertIn("not recorded", json.dumps(result))
+        self.assertIn("possible defaults, not proof", json.dumps(result))
         self.assertIn("Legacy baselines without recorded compaction policy: 2",
                       rescue_evidence.format_terminal(result))
 
