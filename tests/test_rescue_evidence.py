@@ -80,6 +80,31 @@ class OfflineCompactionEvidenceTests(unittest.TestCase):
         self.assertIn("not a verified causal repair",
                       rescue_evidence.format_terminal(result))
 
+    def test_old_baseline_reports_before_compaction_flag_are_supported_cautiously(self):
+        old = receipt()
+        old["agent_evaluation"].pop("auto_compaction_disabled")
+        baseline = [
+            self.save("legacy-90.json", old),
+            self.save("legacy-180.json", old),
+        ]
+        candidates = [
+            self.save("candidate-a.json", receipt(disable=True, status="passed")),
+            self.save("candidate-b.json", receipt(disable=True, status="passed")),
+            self.save("candidate-c.json", receipt(disable=True, status="passed")),
+        ]
+        result = rescue_evidence.assess(baseline, candidates)
+        self.assertEqual(result["baseline"]["legacy_compaction_policy_not_recorded"], 2)
+        self.assertEqual(result["assessment"],
+                         "repeated_mitigation_observed_not_causally_verified")
+        self.assertIn("possible defaults, not proof", json.dumps(result))
+        self.assertIn("Legacy baselines without recorded compaction policy: 2",
+                      rescue_evidence.format_terminal(result))
+
+        with self.assertRaisesRegex(ValueError, "candidate receipts must explicitly"):
+            rescue_evidence.assess(
+                baseline, [self.save("invalid-candidate.json", old)]
+            )
+
     def test_one_baseline_is_inconclusive_by_defined_triage_threshold(self):
         baseline, candidate = self.representative()
         result = rescue_evidence.assess(baseline[:1], candidate)

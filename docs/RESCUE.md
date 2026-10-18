@@ -258,6 +258,13 @@ execution budgets, Ollama's effective context and other possible confounds
 are not reconstructed. Automatic compaction is often needed for long agent
 tasks; turning it off can cause context-window exhaustion.
 
+**Legacy receipts:** Earlier single-task reports were produced before
+Rescue started recording an explicit `auto_compaction_disabled` boolean.
+The offline assessor accepts those **only as baseline** receipts,
+flags how many have an unrecorded compaction policy, and treats them
+as *possibly default* compaction rather than independently verified.
+Candidate receipts must explicitly record `auto_compaction_disabled: true`.
+
 The report recommendation is always
 `no_automatic_or_global_compaction_change`, even if the exploratory
 criterion is met. To investigate causality, perform independent alternating

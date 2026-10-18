@@ -66,9 +66,13 @@ def _normalize(report: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("the fixture or task version differs from the fixed Rescue task")
     if result.get("agent_steps_limit") is not None:
         raise ValueError("step-limit experiments are not comparable in this analysis")
-    compaction_disabled = result.get("auto_compaction_disabled")
+    # Receipts predating the opt-in compaction switch had no such field.
+    # Accept them as *possible* default-compaction baselines only, and
+    # explicitly disclose that the setting was not recorded in the receipt.
+    legacy_policy_not_recorded = "auto_compaction_disabled" not in result
+    compaction_disabled = result.get("auto_compaction_disabled", False)
     if type(compaction_disabled) is not bool:
-        raise ValueError("receipt is missing an explicit compaction policy")
+        raise ValueError("receipt contains an invalid compaction policy")
     status = result.get("status")
     if status not in ("passed", "failed"):
         raise ValueError("receipt has an unsupported task status")
@@ -98,6 +102,7 @@ def _normalize(report: Dict[str, Any]) -> Dict[str, Any]:
         "model": model,
         "declared_context": context,
         "auto_compaction_disabled": compaction_disabled,
+        "legacy_compaction_policy_not_recorded": legacy_policy_not_recorded,
         "strict_pass": strict_pass,
         "correction_evidence": correction_evidence,
         "process_exit": checks["process_exit_zero"],
@@ -112,6 +117,9 @@ def _group(observations: List[Dict[str, Any]]) -> Dict[str, Any]:
     count = len(observations)
     return {
         "sessions": count,
+        "legacy_compaction_policy_not_recorded": sum(
+            x["legacy_compaction_policy_not_recorded"] for x in observations
+        ),
         "strict_task_passes": sum(x["strict_pass"] for x in observations),
         "provisional_correct_fixes": sum(x["correction_evidence"] for x in observations),
         "successful_process_exits": sum(x["process_exit"] for x in observations),
@@ -138,7 +146,8 @@ def assess(baselines: Sequence[str], candidates: Sequence[str]) -> Dict[str, Any
         raise ValueError("all receipts must use the same model and declared context")
     if any(r["auto_compaction_disabled"] for r in original):
         raise ValueError("baseline receipts must have default automatic compaction")
-    if any(not r["auto_compaction_disabled"] for r in modified):
+    if any(not r["auto_compaction_disabled"] or r["legacy_compaction_policy_not_recorded"]
+           for r in modified):
         raise ValueError("candidate receipts must explicitly disable auto compaction")
 
     before = _group(original)
@@ -160,7 +169,7 @@ def assess(baselines: Sequence[str], candidates: Sequence[str]) -> Dict[str, Any
         "model": model,
         "declared_context_tokens": context,
         "variable_compared": "opencode_compaction_auto",
-        "baseline_auto_compaction": "unspecified_default",
+        "baseline_auto_compaction": "default_or_legacy_policy_not_recorded",
         "candidate_auto_compaction": "explicitly_disabled",
         "baseline": before,
         "candidate": after,
@@ -177,6 +186,8 @@ def assess(baselines: Sequence[str], candidates: Sequence[str]) -> Dict[str, Any
         "warnings": [
             "Receipts are user-selected self-reported JSON, not independently signed execution evidence.",
             "The reported OpenCode configuration was constructed in a disposable workspace.",
+            "Older baseline receipts may lack an explicit auto-compaction field; "
+            "those are treated as possible defaults, not proof of the actual setting.",
             "The declared context is not verified as Ollama's effective per-request context.",
             "Uncontrolled differences in execution order, timeouts, machine load and runtime state remain.",
             "One tiny read-only task and few runs cannot establish causal or statistical reliability.",
@@ -193,6 +204,8 @@ def format_terminal(report: Dict[str, Any]) -> str:
         "======================================================",
         "Model: " + report["model"],
         "Declared context: " + str(report["declared_context_tokens"]) + " tokens",
+        "Legacy baselines without recorded compaction policy: " +
+            str(baseline["legacy_compaction_policy_not_recorded"]),
         "Baseline: " + str(baseline["strict_task_passes"]) + "/" +
             str(baseline["sessions"]) + " strict passes; " +
             str(baseline["agent_timeouts_after_fix_evidence"]) + " timeouts with provisional fixes",
