@@ -10,6 +10,11 @@ class PlanExplorerUiTests(unittest.TestCase):
         self.assertIn('Plan loaded. Click Explore Plan to view its evidence.', content)
         self.assertNotIn('document.getElementById("inspect").click()', content)
 
+    def test_report_file_selection_does_not_auto_render(self):
+        content = (Path(__file__).resolve().parents[1] / "docs" / "rig-report-viewer.html").read_text(encoding="utf-8")
+        self.assertIn('Report loaded. Click View report to display it.', content)
+        self.assertNotIn('reader.onload=function(){editor.value=reader.result;fromInput();}', content)
+
 
 if __name__ == "__main__":
     unittest.main()
