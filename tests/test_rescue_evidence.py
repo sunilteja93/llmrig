@@ -104,8 +104,9 @@ class OfflineCompactionEvidenceTests(unittest.TestCase):
         baseline, candidate = self.representative()
         with self.assertRaisesRegex(ValueError, "baseline"):
             rescue_evidence.assess(candidate[:1], candidate[1:])
+        another_default = self.save("another-default.json", receipt())
         with self.assertRaisesRegex(ValueError, "candidate"):
-            rescue_evidence.assess(baseline, baseline[:1])
+            rescue_evidence.assess(baseline, [another_default])
         with self.assertRaisesRegex(ValueError, "step-limit"):
             rescue_evidence.assess(
                 [self.save("steps-limited.json", receipt(steps=4))], candidate
