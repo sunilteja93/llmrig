@@ -36,7 +36,8 @@ def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _configuration(model: str, context: int, agent_steps: Optional[int] = None) -> Dict[str, Any]:
+def _configuration(model: str, context: int, agent_steps: Optional[int] = None,
+                   disable_auto_compaction: bool = False) -> Dict[str, Any]:
     """Explicit local provider plus deny-by-default read-only agent."""
     permissions = {
         "*": "deny",
@@ -81,6 +82,10 @@ def _configuration(model: str, context: int, agent_steps: Optional[int] = None) 
         # OpenCode's documented step budget applies only to this disposable
         # read-only agent. It is not a process timeout or persistent setting.
         config["agent"]["rescue-readonly"]["steps"] = agent_steps
+    if disable_auto_compaction:
+        # Explicit isolated hypothesis test: never alter the user's configs.
+        # Turning off auto compaction could produce a context-limit error.
+        config["compaction"] = {"auto": False}
     return config
 
 
@@ -197,7 +202,8 @@ def _invoke(cmd: List[str], cwd: Path, env: Dict[str, str], seconds: int
 
 
 def evaluate(model: str, context: int, seconds: int = 120,
-             agent_steps: Optional[int] = None) -> Dict[str, Any]:
+             agent_steps: Optional[int] = None,
+             disable_auto_compaction: bool = False) -> Dict[str, Any]:
     """Require opt-in from the caller. No network except the selected local model is intended.
 
     OpenCode is third-party executable code with OS user permissions; this
@@ -210,12 +216,15 @@ def evaluate(model: str, context: int, seconds: int = 120,
         or not 2 <= agent_steps <= 12
     ):
         raise ValueError("--agent-steps must be an integer between 2 and 12")
+    if not isinstance(disable_auto_compaction, bool):
+        raise ValueError("--agent-no-auto-compact must be boolean")
     opencode = shutil.which("opencode")
     if not opencode:
         raise ValueError("OpenCode is not on PATH")
     report: Dict[str, Any] = {
         "task_id": TASK_ID,
         "agent_steps_limit": agent_steps,
+        "auto_compaction_disabled": disable_auto_compaction,
         "status": "failed",
         "model": model,
         "agent": "opencode",
@@ -244,7 +253,10 @@ def evaluate(model: str, context: int, seconds: int = 120,
         (home / "empty-opencode").mkdir()
         fixture = project / "math_ops.py"
         fixture.write_text(SOURCE, encoding="utf-8")
-        config = _configuration(model, context, agent_steps=agent_steps)
+        config = _configuration(
+            model, context, agent_steps=agent_steps,
+            disable_auto_compaction=disable_auto_compaction,
+        )
         (project / "opencode.json").write_text(json.dumps(config), encoding="utf-8")
         before = _sha(fixture.read_bytes())
         cmd = [
