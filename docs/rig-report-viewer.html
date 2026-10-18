@@ -24,6 +24,13 @@
     .metric {border:1px solid var(--stroke);border-radius:12px;padding:20px;background:#0b1625}
     .metric span {color:var(--muted);display:block;font-size:.82rem}
     .metric strong {display:block;font-size:1.35rem;overflow-wrap:anywhere}
+    .entry summary {cursor:pointer;font-weight:800;font-size:1.06rem}
+    .entry summary:focus-visible,.revision-detail summary:focus-visible {outline:3px solid #70baff;outline-offset:3px}
+    .entry-content {padding-top:18px}
+    .revision-detail {margin-top:16px;color:var(--muted);font-size:.87rem}
+    .revision-detail summary {cursor:pointer}
+    .revision-detail code {display:block;margin-top:6px;overflow-wrap:anywhere;color:var(--text)}
+    .metric-note {margin-top:14px;font-size:.87rem;color:var(--muted)}
     #result {display:none}
     #error {color:#ffd4b1;font-weight:600}
     footer {font-size:.85rem;margin-top:24px;color:var(--muted)}
@@ -37,7 +44,9 @@
   <div class="eyebrow">LLMRig / Evidence first</div>
   <h1>Your local AI, verified.</h1>
   <p>Turn a real Autopilot receipt into a clean report you can inspect, print or screenshot. All parsing happens locally in this browser. There are no external scripts, fonts, trackers or uploads.</p>
-  <section class="panel entry" aria-label="Load a report">
+  <details class="panel entry" id="loader" aria-label="Load a report" open>
+    <summary>Load or change report</summary>
+    <div class="entry-content">
     <label for="file">Open a JSON report created by LLMRig</label>
     <input id="file" type="file" accept=".json,application/json">
     <p>Or paste the output of <code>llmrig report --json</code>:</p>
@@ -45,12 +54,15 @@
     <button id="open" type="button">View report</button>
     <button id="sample" class="secondary" type="button">Load demonstration</button>
     <p id="error" role="alert" aria-live="polite"></p>
-  </section>
+    </div>
+  </details>
   <section id="result" class="panel" aria-live="polite">
     <div class="eyebrow">Rig Report <span id="demo"></span></div>
     <h2 id="model"></h2>
     <span class="pill" id="status"></span>
     <div class="grid" id="metrics"></div>
+    <details class="revision-detail" id="revision-details" hidden><summary>Show full artifact revision</summary><code id="revision-value"></code></details>
+    <p class="metric-note" id="missing-throughput" hidden></p>
     <footer>
       <p>Numbers are self-reported by an Autopilot receipt, not independently attested. Measured speed is not model quality. Machine hardware is omitted because older receipts do not capture historical machine identity.</p>
       <a href="https://github.com/sunilteja93/llmrig">Explore LLMRig on GitHub</a>
@@ -70,6 +82,7 @@
     var caption=document.createElement("span");caption.textContent=title;
     var strong=document.createElement("strong");strong.textContent=String(value);
     box.appendChild(caption);box.appendChild(strong);parent.appendChild(box);
+    return box;
   }
   function numeric(value,unit) {
     if(typeof value!=="number"||!Number.isFinite(value)||value<0)return null;
@@ -85,17 +98,29 @@
     field(m,"Runtime",payload.runtime);
     field(m,"Artifact format",payload.artifact_format);
     field(m,"Quantization",payload.quantization);
-    field(m,"Revision",payload.artifact_revision);
+    var revision=typeof payload.artifact_revision==="string"?payload.artifact_revision:"";
+    if(revision)field(m,"Revision",revision.length>21?revision.slice(0,12)+"…"+revision.slice(-7):revision);
+    var fullRevision=document.getElementById("revision-details");
+    fullRevision.hidden=!revision||revision.length<=21;
+    fullRevision.open=false;
+    document.getElementById("revision-value").textContent=revision;
     field(m,"Context (tokens)",payload.context_tokens);
     var v=payload.verification;
+    var missing=document.getElementById("missing-throughput");
+    missing.hidden=true;
+    missing.textContent="";
     if(v&&typeof v==="object") {
       field(m,"Verification method",v.method);
       field(m,"Measured runs",v.runs);
       field(m,"Generation",numeric(v.generation_tps," tok/s"));
       field(m,"Prompt evaluation",numeric(v.prompt_eval_tps," tok/s"));
       field(m,"Total latency",numeric(v.total_latency_s," s"));
+      if(v.generation_tps===null||v.generation_tps===undefined||v.prompt_eval_tps===null||v.prompt_eval_tps===undefined){
+        missing.textContent="Throughput: "+(v.generation_tps==null&&v.prompt_eval_tps==null?"generation and prompt speeds were":"one or more speed metrics were")+" not recorded in this receipt. LLMRig does not estimate tokens/s from latency.";
+        missing.hidden=false;
+      }
     }else {field(m,"Measurements","Not recorded");}
-    error.textContent="";view.style.display="block";view.scrollIntoView({behavior:"smooth"});
+    error.textContent="";view.style.display="block";document.getElementById("loader").open=false;view.scrollIntoView({behavior:"smooth"});
   }
   function fromInput() {
     try {render(JSON.parse(editor.value),false);}

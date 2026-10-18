@@ -135,6 +135,20 @@ def format_markdown(report: Mapping[str, Any]) -> str:
             value = verification.get(key)
             if value is not None:
                 lines.append("**" + label + ":** " + str(value) + unit)
+        missing = [
+            label for key, label in (
+                ("generation_tps", "generation speed"),
+                ("prompt_eval_tps", "prompt evaluation speed"),
+            )
+            if verification.get(key) is None
+        ]
+        if missing:
+            lines.append(
+                "**Unavailable throughput:** "
+                + ", ".join(missing)
+                + " not recorded in this receipt. "
+                "Tokens/s is not inferred from total latency."
+            )
     else:
         lines.extend(["## Verification", "", "No measurements recorded."])
     lines.extend([
@@ -165,6 +179,10 @@ def format_terminal(report: Mapping[str, Any]) -> str:
             lines.append("Generation: " + str(measurements["generation_tps"]) + " tokens/s")
         if measurements.get("prompt_eval_tps") is not None:
             lines.append("Prompt: " + str(measurements["prompt_eval_tps"]) + " tokens/s")
+        if measurements.get("total_latency_s") is not None:
+            lines.append("Reported latency: " + str(measurements["total_latency_s"]) + " s")
+        if measurements.get("generation_tps") is None or measurements.get("prompt_eval_tps") is None:
+            lines.append("Throughput: one or more speeds not recorded; not inferred from latency.")
     else:
         lines.append("Measured verification: not recorded")
     lines.extend([
