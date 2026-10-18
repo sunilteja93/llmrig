@@ -228,6 +228,10 @@ def _rescue_parser() -> argparse.ArgumentParser:
         help="Explicitly run one read-only OpenCode coding task in a disposable project.",
     )
     parser.add_argument(
+        "--agent-no-auto-compact", action="store_true",
+        help="Experimental: disable OpenCode automatic compaction only in disposable --agent-test fixture.",
+    )
+    parser.add_argument(
         "--agent-steps", type=int, default=None,
         help="Experimental iteration cap in disposable OpenCode agent (2-12; requires --agent-test).",
     )
@@ -256,6 +260,7 @@ def command_rescue(args: argparse.Namespace) -> int:
             agent_test=args.agent_test, agent_timeout=args.agent_timeout,
             ab_test=args.ab_test, ab_repeats=args.ab_repeats, ab_budget=args.ab_budget,
             agent_steps=args.agent_steps,
+            agent_no_auto_compact=args.agent_no_auto_compact,
         )
     except RescueError as exc:
         print("llmrig rescue: " + str(exc), file=sys.stderr)

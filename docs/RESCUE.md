@@ -192,6 +192,33 @@ the context configured in OpenCode. The value describes the loaded model,
 not necessarily the entire context history of any particular OpenCode
 request. An absent model or mismatched value requires more investigation.
 
+## Experimental automatic-compaction hypothesis (opt-in)
+
+For an agent that produces the expected answer but repeatedly starts new
+steps and times out at a small **declared** context, Rescue can test whether
+OpenCode's automatic session compaction is involved. This changes **only**
+`compaction.auto` in the disposable OpenCode fixture. It does not change the
+user's global or project configuration and does not increase Ollama's context.
+
+```bash
+llmrig rescue --agent opencode --model qwen3.8:27b-mlx \
+  --context 4096 --agent-test --agent-no-auto-compact \
+  --agent-timeout 90 --output rescue-4k-compaction-off.json
+```
+
+Compare this with the previous 4K run using the same model, prompt and 90s
+limit without `--agent-no-auto-compact`. Any improvement remains anecdotal
+until repeated. A context-overflow/provider error after disabling compaction
+is itself useful diagnostic evidence, **not** a successful repair; compaction
+normally protects against overflowing context. OpenCode's
+`compaction.auto: false` controls automatic compaction, not all agent
+continuation or provider retries. Reverting is automatic because the
+disposable fixture is removed after the run.
+
+The privacy-safe event summary, file-integrity checks, process timeout
+and deny-by-default agent permissions are unchanged. This is an
+**experimental diagnosis**, never an automatic user configuration change.
+
 ## Experimental A/B coding-task verification
 
 LLMRig can run an **opt-in exploratory A/B trial** using three fixed read-only
