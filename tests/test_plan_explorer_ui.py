@@ -15,6 +15,16 @@ class PlanExplorerUiTests(unittest.TestCase):
         self.assertIn('Report loaded. Click View report to display it.', content)
         self.assertNotIn('reader.onload=function(){editor.value=reader.result;fromInput();}', content)
 
+    def test_report_viewer_collapses_input_after_rendering_and_reveals_full_revision(self):
+        content = (Path(__file__).resolve().parents[1] / "docs" / "rig-report-viewer.html").read_text(encoding="utf-8")
+        self.assertIn('id="loader" aria-label="Load a report" open', content)
+        self.assertIn('document.getElementById("loader").open=false', content)
+        self.assertIn('id="revision-details"', content)
+        self.assertIn('id="revision-value"', content)
+        self.assertIn('revision.slice(0,12)', content)
+        self.assertIn('not recorded in this receipt', content)
+        self.assertIn('LLMRig does not estimate tokens/s from latency', content)
+
 
 if __name__ == "__main__":
     unittest.main()
