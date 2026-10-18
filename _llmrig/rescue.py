@@ -58,6 +58,11 @@ def local_host() -> str:
     return raw.rstrip("/")
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        raise RescueError("local Ollama request redirected; refusing to follow")
+
+
 def _http(base: str, endpoint: str, payload: Optional[Dict[str, Any]] = None,
           timeout: int = 8) -> Dict[str, Any]:
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
@@ -68,7 +73,7 @@ def _http(base: str, endpoint: str, payload: Optional[Dict[str, Any]] = None,
     try:
         # Do not route even synthetic agent-protocol probes via HTTP_PROXY.
         # The endpoint is validated as loopback by local_host().
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
         with opener.open(request, timeout=timeout) as response:
             body = response.read(_MAX_RESPONSE_BYTES + 1)
         if len(body) > _MAX_RESPONSE_BYTES:
