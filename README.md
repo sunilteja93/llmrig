@@ -1,8 +1,8 @@
 <h1 align="center">LLMRig</h1>
 
-<p align="center"><strong>Stop guessing how to run local models.</strong></p>
+<p align="center"><strong>Plan it. Run it. Verify it.</strong></p>
 
-<p align="center">LLMRig is an evidence-driven Autopilot for local AI. Give it a model and a machine to see what is known, blocked, or unknown before you approve setup and verification.</p>
+<p align="center">LLMRig helps you choose an evidence-backed local AI setup, understand what is blocked, approve supported actions, and verify what actually ran. Works across Ollama, oMLX, MLX-LM and llama.cpp where the exact path is supported.</p>
 
 <p align="center">
   <a href="https://github.com/sunilteja93/llmrig/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/sunilteja93/llmrig/actions/workflows/ci.yml/badge.svg"></a>
@@ -12,49 +12,36 @@
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/sunilteja93/llmrig/main/assets/llmrig-terminal.svg" alt="LLMRig runtime intelligence and evidence-driven local AI flow" width="100%" />
+  <img src="https://raw.githubusercontent.com/sunilteja93/llmrig/main/assets/llmrig-terminal.svg" alt="LLMRig evidence-driven local AI Autopilot" width="100%" />
 </p>
 
-## See it in 30 seconds
+## Start here
 
-```bash
+Install once, diagnose the setup, then run only if LLMRig can establish a supported path:
+
+~~~bash
 pipx install llmrig
+llmrig runtimes
+llmrig doctor mlx-community/Qwen3.5-27B-4bit
 llmrig plan mlx-community/Qwen3.5-27B-4bit
-```
-
-Representative output:
-
-```text
-LLMRig Autopilot Plan
-=====================
-Machine: Apple M4 Max · 48 GiB
-Model:   mlx-community/Qwen3.5-27B-4bit
-
-Runtime       Format   Quant    Fit         Local      Executable
-------------  -------  -------  ----------  ---------  ------------
-omlx          MLX      4-bit    compatible  unknown    not_executable
-mlx-lm        MLX      4-bit    compatible  unknown    not_executable
-
-Setup path: omlx · MLX
-Reason: exactly one compatible candidate has a complete, supported
-Autopilot setup path. This is a setup selection, not a performance ranking.
-
-Planned actions
-1. Acquire the selected artifact
-2. Prepare the selected runtime
-3. Load/register the artifact
-4. Verify with LLMRig's deterministic workload
-
-No action has been taken.
-```
-
-`plan` is read-only. If the evidence is insufficient, LLMRig stays inconclusive instead of inventing a winner.
-
-Ready to continue? Run the workflow and approve any mutation explicitly:
-
-```bash
 llmrig run mlx-community/Qwen3.5-27B-4bit
-```
+~~~
+
+The new **doctor** command is read-only and explains the next step when a runtime or model is blocked. **run** previews the planned actions and asks permission before downloading, installing, or starting anything. If evidence does not support an executable path, LLMRig stops and explains why. It never pretends a model ran.
+
+After an **actual successful verification**, share only the approved public facts from the latest local receipt:
+
+~~~bash
+llmrig report --share
+llmrig report --share --output rig-report.md
+llmrig report --json --output rig-report.json
+~~~
+
+Reports do not upload or publish anything automatically. They omit local private paths, secrets, endpoints, and unrecorded hardware details. They are self-reported measurements, not independent attestations.
+
+**Want a known measured example?** LLMRig's recorded Apple M4 Max / 48 GiB observation of mlx-community/Qwen3-0.6B-4bit running on MLX-LM measured 560.85 generation tokens/s with race-v2. This is one measured configuration, not an estimate for your machine or a model-quality score.
+
+Learn more in the [first-run guide](https://github.com/sunilteja93/llmrig/blob/main/docs/FIRST_RUN.md) and the [reproducible validation matrix](https://github.com/sunilteja93/llmrig/blob/main/docs/VALIDATION_MATRIX.md).
 
 ## Why LLMRig
 
