@@ -36,7 +36,7 @@ def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _configuration(model: str, context: int) -> Dict[str, Any]:
+def _configuration(model: str, context: int, agent_steps: Optional[int] = None) -> Dict[str, Any]:
     """Explicit local provider plus deny-by-default read-only agent."""
     permissions = {
         "*": "deny",
@@ -51,7 +51,7 @@ def _configuration(model: str, context: int) -> Dict[str, Any]:
         "list": "allow",
         "external_directory": "deny",
     }
-    return {
+    config = {
         "$schema": "https://opencode.ai/config.json",
         "autoupdate": False,
         "share": "disabled",
@@ -77,6 +77,11 @@ def _configuration(model: str, context: int) -> Dict[str, Any]:
             }
         },
     }
+    if agent_steps is not None:
+        # OpenCode's documented step budget applies only to this disposable
+        # read-only agent. It is not a process timeout or persistent setting.
+        config["agent"]["rescue-readonly"]["steps"] = agent_steps
+    return config
 
 
 def _environment(home: Path, project: Path, config: Dict[str, Any]) -> Dict[str, str]:
@@ -191,7 +196,8 @@ def _invoke(cmd: List[str], cwd: Path, env: Dict[str, str], seconds: int
                 returncode, bounded[:MAX_CAPTURE], timed_out)
 
 
-def evaluate(model: str, context: int, seconds: int = 120) -> Dict[str, Any]:
+def evaluate(model: str, context: int, seconds: int = 120,
+             agent_steps: Optional[int] = None) -> Dict[str, Any]:
     """Require opt-in from the caller. No network except the selected local model is intended.
 
     OpenCode is third-party executable code with OS user permissions; this
@@ -199,11 +205,17 @@ def evaluate(model: str, context: int, seconds: int = 120) -> Dict[str, Any]:
     """
     if isinstance(seconds, bool) or not isinstance(seconds, int) or not 20 <= seconds <= 180:
         raise ValueError("agent timeout must be between 20 and 180 seconds")
+    if agent_steps is not None and (
+        isinstance(agent_steps, bool) or not isinstance(agent_steps, int)
+        or not 2 <= agent_steps <= 12
+    ):
+        raise ValueError("--agent-steps must be an integer between 2 and 12")
     opencode = shutil.which("opencode")
     if not opencode:
         raise ValueError("OpenCode is not on PATH")
     report: Dict[str, Any] = {
         "task_id": TASK_ID,
+        "agent_steps_limit": agent_steps,
         "status": "failed",
         "model": model,
         "agent": "opencode",
@@ -232,7 +244,7 @@ def evaluate(model: str, context: int, seconds: int = 120) -> Dict[str, Any]:
         (home / "empty-opencode").mkdir()
         fixture = project / "math_ops.py"
         fixture.write_text(SOURCE, encoding="utf-8")
-        config = _configuration(model, context)
+        config = _configuration(model, context, agent_steps=agent_steps)
         (project / "opencode.json").write_text(json.dumps(config), encoding="utf-8")
         before = _sha(fixture.read_bytes())
         cmd = [

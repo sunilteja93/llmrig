@@ -237,7 +237,8 @@ def measure(base: str, model: str, context: int, runs: int,
 def rescue(agent: str, model: str, context: int, runs: int,
            compare_context: Optional[int], probe: bool, agent_test: bool = False,
            agent_timeout: int = 120, ab_test: bool = False,
-           ab_repeats: int = 2, ab_budget: int = 600) -> Dict[str, Any]:
+           ab_repeats: int = 2, ab_budget: int = 600,
+           agent_steps: Optional[int] = None) -> Dict[str, Any]:
     if agent != "opencode":
         raise RescueError("only the opencode preflight adapter is supported")
     model = validate_model(model)
@@ -258,6 +259,12 @@ def rescue(agent: str, model: str, context: int, runs: int,
         raise RescueError("--agent-test is separate from --probe/--compare-context/--ab-test")
     if isinstance(agent_timeout, bool) or not isinstance(agent_timeout, int) or not 20 <= agent_timeout <= 180:
         raise RescueError("--agent-timeout must be between 20 and 180 seconds")
+    if agent_steps is not None:
+        if not agent_test:
+            raise RescueError("--agent-steps requires explicit --agent-test")
+        if (isinstance(agent_steps, bool) or not isinstance(agent_steps, int)
+                or not 2 <= agent_steps <= 12):
+            raise RescueError("--agent-steps must be between 2 and 12")
     base = local_host()
     report = preflight(agent, model, context, base)
     if report["status"] != "ready_for_probe":
@@ -302,7 +309,12 @@ def rescue(agent: str, model: str, context: int, runs: int,
             return report
         from .rescue_agent import evaluate
         try:
-            agent_result = evaluate(model, context, seconds=agent_timeout)
+            if agent_steps is None:
+                agent_result = evaluate(model, context, seconds=agent_timeout)
+            else:
+                agent_result = evaluate(
+                    model, context, seconds=agent_timeout, agent_steps=agent_steps
+                )
         except ValueError as exc:
             raise RescueError(str(exc))
         report["mode"] = "measured_agent_task"
@@ -419,6 +431,12 @@ def format_terminal(report: Dict[str, Any]) -> str:
     if report.get("agent_evaluation"):
         evaluation = report["agent_evaluation"]
         lines.append("Agent coding task: " + evaluation["status"])
+        if evaluation.get("agent_steps_limit") is not None:
+            lines.append(
+                "Configured agent step limit: " +
+                str(evaluation["agent_steps_limit"]) +
+                " (temporary, not a process timeout)"
+            )
         for name, passed in evaluation["checks"].items():
             lines.append("  " + name + ": " + ("passed" if passed else "failed"))
         if evaluation["failure_category"]:

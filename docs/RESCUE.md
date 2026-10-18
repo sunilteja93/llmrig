@@ -152,6 +152,46 @@ not automatically change OpenCode's configuration, run arbitrary coding
 projects, or prove a repair. Subsequent phases will add versioned
 tasks, explicit counterfactual configurations and comparison evidence.
 
+## Experimental agent iteration limit (opt-in)
+
+The read-only OpenCode evaluator can request an explicit **temporary**
+agentic iteration cap, matching the documented OpenCode `steps` setting.
+It is useful for investigating an agent that produces an expected fix but
+continues through additional steps instead of exiting.
+
+```bash
+llmrig rescue --agent opencode --model qwen3.8:27b-mlx \
+  --context 4096 --agent-test --agent-steps 4 \
+  --agent-timeout 90 --output rescue-4k-steps4.json
+```
+
+The cap is inserted into the `rescue-readonly` agent inside the disposable
+test's `opencode.json`. It is **not** an automatic early-exit or a kill
+switch, does not edit your regular OpenCode settings, and is *not* applied
+without the explicit `--agent-test --agent-steps` combination. Values
+from 2 to 12 are accepted. The regular agent process timeout, deny-by-default
+permissions and SHA-256 file-integrity checks still apply.
+
+This changes one independent variable compared with the otherwise same
+read-only 4K fixture test: an agent iteration limit. If the run exits
+normally with all checks passing, that is **evidence that the configured
+step cap improved this particular test run**, not proof that context length
+caused the original failure or that real-world agent reliability improved.
+If it still times out, do not keep escalating resource limits blindly.
+
+**Check loaded Ollama context separately:** Ollama's documented
+`GET /api/ps` endpoint exposes `context_length` for running models.
+While a test is active, a second terminal can run:
+
+```bash
+curl -sS http://127.0.0.1:11434/api/ps
+```
+
+Compare the returned `context_length` for your exact model against
+the context configured in OpenCode. The value describes the loaded model,
+not necessarily the entire context history of any particular OpenCode
+request. An absent model or mismatched value requires more investigation.
+
 ## Experimental A/B coding-task verification
 
 LLMRig can run an **opt-in exploratory A/B trial** using three fixed read-only
