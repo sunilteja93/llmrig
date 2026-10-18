@@ -212,6 +212,14 @@ def _rescue_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--runs", type=int, default=3, help="Canary trials per context (1-5).")
     parser.add_argument(
+        "--agent-test", action="store_true",
+        help="Explicitly run one read-only OpenCode coding task in a disposable project.",
+    )
+    parser.add_argument(
+        "--agent-timeout", type=int, default=120,
+        help="Timeout in seconds for --agent-test (20-180).",
+    )
+    parser.add_argument(
         "--probe", action="store_true",
         help="Opt in to bounded local inference (not an OpenCode end-to-end task).",
     )
@@ -229,6 +237,7 @@ def command_rescue(args: argparse.Namespace) -> int:
         report = rescue(
             args.agent, args.model, args.context, args.runs,
             args.compare_context, args.probe,
+            agent_test=args.agent_test, agent_timeout=args.agent_timeout,
         )
     except RescueError as exc:
         print("llmrig rescue: " + str(exc), file=sys.stderr)
@@ -251,7 +260,9 @@ def command_rescue(args: argparse.Namespace) -> int:
         print("Rescue report saved locally. No report was uploaded.")
     else:
         print(payload, end="") if args.json else print(format_terminal(report), end="")
-    return 0 if report["status"] in ("ready_for_probe", "measured") else 2
+    if report["status"] == "agent_task_failed":
+        return 1
+    return 0 if report["status"] in ("ready_for_probe", "measured", "agent_task_passed") else 2
 
 
 def _build_plan(model: str, context: Optional[int], legacy: object) -> AutopilotExecutionPlan:
@@ -639,6 +650,7 @@ def _print_augmented_help() -> int:
     print("\nRescue (initial protocol diagnostic):")
     print("  rescue --agent opencode --model MODEL")
     print("                       Read-only preflight; --probe opts into bounded inference.")
+    print("                       --agent-test opts into one disposable OpenCode task.")
     return 0
 
 
