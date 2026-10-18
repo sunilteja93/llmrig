@@ -270,6 +270,16 @@ def rescue(agent: str, model: str, context: int, runs: int,
         except ValueError as exc:
             raise RescueError(str(exc))
         report["mode"] = "measured_agent_task"
+        report["scope"] = (
+            "One disposable OpenCode coding-task evaluation; "
+            "not automatic repair or general agent reliability"
+        )
+        # Preflight correctly marks agent behavior as untested. A completed
+        # agent evaluation, even if it fails, supersedes that uncertainty.
+        report["unknowns"] = [
+            item for item in report["unknowns"]
+            if item != "OpenCode tool execution and task completion have not been tested"
+        ]
         report["agent_evaluation"] = agent_result
         report["status"] = "agent_task_passed" if agent_result["status"] == "passed" else "agent_task_failed"
         report["local_changes"] = (
@@ -314,9 +324,16 @@ def rescue(agent: str, model: str, context: int, runs: int,
 
 
 def format_terminal(report: Dict[str, Any]) -> str:
+    mode = report.get("mode")
+    if mode == "measured_agent_task":
+        heading = "LLMRig Rescue | OpenCode coding-task evaluation"
+    elif mode == "measured_protocol_probe":
+        heading = "LLMRig Rescue | Ollama tool-call canary"
+    else:
+        heading = "LLMRig Rescue | Ollama protocol preflight"
     lines = [
-        "LLMRig Rescue | Ollama protocol preflight",
-        "======================================",
+        heading,
+        "=" * len(heading),
         "Agent: " + report["agent"] + " (executable " +
         ("found" if report["agent_executable_detected"] else "not detected") + ")",
         "Model: " + report["model"],
