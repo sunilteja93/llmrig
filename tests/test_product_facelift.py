@@ -55,6 +55,39 @@ class RigReportTests(unittest.TestCase):
         self.assertIn("not independently attested", markdown)
         self.assertIn("Machine hardware is intentionally omitted", markdown)
 
+    def test_report_exposes_only_safe_exact_ollama_tag(self):
+        local = receipt()
+        local["candidate"]["runtime"] = "ollama"
+        local["candidate"]["artifact_id"] = "qwen3.8:27b-mlx"
+        report = build_share_report(local)
+        self.assertEqual(report["model"], "org/model")
+        self.assertEqual(report["ollama_model_tag"], "qwen3.8:27b-mlx")
+        self.assertIn("Ollama tag: qwen3.8:27b-mlx", format_terminal(report))
+        self.assertIn("Ollama model tag", format_markdown(report))
+        self.assertIn("Catalog-derived format is not runtime-verified quantization", format_markdown(report))
+
+    def test_report_never_exposes_private_ollama_locator_as_tag(self):
+        for private in (
+            "/Users/private-user/.ollama/models",
+            "../../secret",
+            "https://example.com/evil",
+            "qwen3.8:27b-mlx;SECRET",
+            "qwen3.8:27b-mlx\\nsecret",
+        ):
+            with self.subTest(private=private):
+                local = receipt()
+                local["candidate"]["runtime"] = "ollama"
+                local["candidate"]["artifact_id"] = private
+                report = build_share_report(local)
+                self.assertIsNone(report["ollama_model_tag"])
+                self.assertNotIn(private, json.dumps(report))
+
+    def test_non_ollama_model_tag_is_not_shared(self):
+        local = receipt()
+        local["candidate"]["artifact_id"] = "hf://org/model/mlx"
+        report = build_share_report(local)
+        self.assertIsNone(report["ollama_model_tag"])
+
     def test_report_escapes_html_and_markdown(self):
         edited = receipt()
         edited["model"] = "<img src=x onerror=alert(1)>"

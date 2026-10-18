@@ -25,6 +25,14 @@ class PlanExplorerUiTests(unittest.TestCase):
         self.assertIn('not recorded in this receipt', content)
         self.assertIn('LLMRig does not estimate tokens/s from latency', content)
 
+    def test_ollama_tag_and_catalog_format_caveat_in_viewer(self):
+        content = (Path(__file__).resolve().parents[1] / "docs" / "rig-report-viewer.html").read_text(encoding="utf-8")
+        self.assertIn('id="artifact-tag"', content)
+        self.assertIn('payload.ollama_model_tag', content)
+        self.assertIn('Catalog format', content)
+        self.assertIn('not runtime-verified quantization', content)
+        self.assertIn('tag.textContent=', content)
+
 
 if __name__ == "__main__":
     unittest.main()
