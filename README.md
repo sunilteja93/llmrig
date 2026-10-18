@@ -85,6 +85,22 @@ user-generated JSON reports locally. After your own successful
 open the viewer in a local browser and click **View report** to produce
 a shareable, inspectable card.
 
+## Experimental: Rescue protocol diagnostics
+
+LLMRig is building a reproducible **diagnose → reproduce → verify**
+workflow for local AI agents. The first Rescue implementation is on a
+development branch; **it is not included in the PyPI v0.10.0 release**.
+
+It checks whether an OpenCode executable is present, confirms a specified
+Ollama model is installed, and, **only with explicit `--probe`**, measures
+a synthetic tool-call canary at one or two context sizes. It does not run
+OpenCode, edit your configuration, download model weights or claim to
+have repaired an agent. Reports omit raw model output and user files.
+
+Read the [Rescue design and experimental CLI guide](https://github.com/sunilteja93/llmrig/blob/main/docs/RESCUE.md).
+A real end-to-end coding-task repair must be independently demonstrated
+before we make that claim.
+
 ## Why LLMRig
 
 Running models locally still involves too much guesswork:
