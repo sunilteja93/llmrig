@@ -43,6 +43,8 @@ Reports do not upload or publish anything automatically. They omit local private
 
 Learn more in the [first-run guide](https://github.com/sunilteja93/llmrig/blob/main/docs/FIRST_RUN.md) and the [reproducible validation matrix](https://github.com/sunilteja93/llmrig/blob/main/docs/VALIDATION_MATRIX.md).
 
+**Want a visual card?** Open [the offline Rig Report viewer](https://github.com/sunilteja93/llmrig/blob/main/docs/rig-report-viewer.html) locally in your browser and load the JSON report. The viewer runs entirely on your machine with no upload or third-party scripts.
+
 ## Why LLMRig
 
 Running models locally still involves too much guesswork:
