@@ -17,7 +17,7 @@
 
 ## Start here
 
-**Install LLMRig v0.10.0** using isolated [`pipx`](https://pipx.pypa.io/).
+**Install LLMRig v0.11.0** using isolated [`pipx`](https://pipx.pypa.io/).
 See the [installation guide](https://github.com/sunilteja93/llmrig/blob/main/docs/INSTALL.md) for platform-specific setup.
 
 ~~~bash
