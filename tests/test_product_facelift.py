@@ -55,6 +55,20 @@ class RigReportTests(unittest.TestCase):
         self.assertIn("not independently attested", markdown)
         self.assertIn("Machine hardware is intentionally omitted", markdown)
 
+    def test_report_escapes_html_and_markdown(self):
+        edited = receipt()
+        edited["model"] = "<img src=x onerror=alert(1)>"
+        edited["logical_model_id"] = None
+        markdown = format_markdown(build_share_report(edited))
+        self.assertNotIn("<img", markdown)
+        self.assertIn("&lt;img", markdown)
+
+    def test_report_routes_from_cli_without_legacy_import(self):
+        with mock.patch.object(cli, "load_receipt", return_value=receipt()):
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(cli.main(["report", "--json"]), 0)
+        self.assertEqual(json.loads(output.getvalue())["project"], "LLMRig")
+
     def test_report_rejects_private_model_identity(self):
         unsafe = receipt()
         unsafe["model"] = "/Users/private-user/model"
