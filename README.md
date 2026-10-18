@@ -22,9 +22,9 @@ Install once, diagnose the setup, then run only if LLMRig can establish a suppor
 ~~~bash
 pipx install llmrig
 llmrig runtimes
-llmrig doctor mlx-community/Qwen3.5-27B-4bit
-llmrig plan mlx-community/Qwen3.5-27B-4bit
-llmrig run mlx-community/Qwen3.5-27B-4bit
+llmrig doctor mlx-community/Qwen3-0.6B-4bit
+llmrig plan mlx-community/Qwen3-0.6B-4bit
+llmrig run mlx-community/Qwen3-0.6B-4bit
 ~~~
 
 The new **doctor** command is read-only and explains the next step when a runtime or model is blocked. **run** previews the planned actions and asks permission before downloading, installing, or starting anything. If evidence does not support an executable path, LLMRig stops and explains why. It never pretends a model ran.
@@ -99,7 +99,7 @@ Four commands, one principle: **explicit intent at every mutation boundary.**
 ### 1. Plan — read only
 
 ```bash
-llmrig plan mlx-community/Qwen3.5-27B-4bit
+llmrig plan mlx-community/Qwen3-0.6B-4bit
 ```
 
 Produces a deterministic plan ID covering machine identity, viable runtime/artifact candidates, required actions, blockers, and a verification step defined *before* anything changes. Downloads nothing, starts nothing.
@@ -109,7 +109,7 @@ If several setup paths stay valid, LLMRig stays inconclusive rather than inventi
 ### 2. Apply — explicit intent
 
 ```bash
-llmrig apply mlx-community/Qwen3.5-27B-4bit --plan-id plan-... --yes
+llmrig apply mlx-community/Qwen3-0.6B-4bit --plan-id plan-... --yes
 ```
 
 LLMRig recomputes the plan immediately before applying. If the evidence no longer reproduces the approved plan ID, apply fails closed with **plan drift detected**. Hugging Face downloads are pinned to the exact repository revision resolved by the Hub.
@@ -185,7 +185,7 @@ Measurement never establishes model quality, and results inside the configured 5
 ```python
 import llmrig
 
-result = llmrig.solve("mlx-community/Qwen3.5-27B-4bit")
+result = llmrig.solve("mlx-community/Qwen3-0.6B-4bit")
 print(result.plan.recommendation_status)
 ```
 
