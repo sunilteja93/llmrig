@@ -259,6 +259,14 @@ def _rescue_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--runs", type=int, default=3, help="Canary trials per context (1-5).")
     parser.add_argument(
+        "--compaction-ab", action="store_true",
+        help="Opt in to paired, alternating default-versus-disabled compaction tasks.",
+    )
+    parser.add_argument(
+        "--compaction-repeats", type=int, default=1,
+        help="Repeat each compaction on/off task pair (1-3, default 1).",
+    )
+    parser.add_argument(
         "--ab-test", action="store_true",
         help="Opt into a fixed 3-task OpenCode A/B comparison (no config changes).",
     )
@@ -308,6 +316,8 @@ def command_rescue(args: argparse.Namespace) -> int:
             ab_test=args.ab_test, ab_repeats=args.ab_repeats, ab_budget=args.ab_budget,
             agent_steps=args.agent_steps,
             agent_no_auto_compact=args.agent_no_auto_compact,
+            compaction_ab=args.compaction_ab,
+            compaction_repeats=args.compaction_repeats,
         )
     except RescueError as exc:
         print("llmrig rescue: " + str(exc), file=sys.stderr)
@@ -330,9 +340,9 @@ def command_rescue(args: argparse.Namespace) -> int:
         print("Rescue report saved locally. No report was uploaded.")
     else:
         print(payload, end="") if args.json else print(format_terminal(report), end="")
-    if report["status"] in ("agent_task_failed", "agent_ab_incomplete"):
+    if report["status"] in ("agent_task_failed", "agent_ab_incomplete", "compaction_ab_incomplete"):
         return 1
-    return 0 if report["status"] in ("ready_for_probe", "measured", "agent_task_passed", "agent_ab_completed") else 2
+    return 0 if report["status"] in ("ready_for_probe", "measured", "agent_task_passed", "agent_ab_completed", "compaction_ab_completed") else 2
 
 
 def _build_plan(model: str, context: Optional[int], legacy: object) -> AutopilotExecutionPlan:
@@ -723,6 +733,7 @@ def _print_augmented_help() -> int:
     print("                       --agent-test opts into one disposable OpenCode task.")
     print("                       --ab-test compares fixed tasks at two contexts.")
     print("  rescue-evidence      Offline assessment of existing mitigation receipts.")
+    print("  rescue --compaction-ab  Alternate compaction on/off in disposable agent tasks.")
     return 0
 
 
