@@ -85,15 +85,32 @@ class OmlxRuntimeActions(_BaseActions):
                 timeout=60,
                 check=False,
             )
+        except subprocess.TimeoutExpired:
+            return RuntimeActionOutcome(
+                "failed",
+                "oMLX start command timed out. Inspect the oMLX service logs.",
+            )
         except (OSError, subprocess.SubprocessError):
-            return RuntimeActionOutcome("failed", "oMLX failed to start.")
+            return RuntimeActionOutcome(
+                "failed",
+                "oMLX start command could not execute. Inspect the oMLX installation and service logs.",
+            )
         if completed.returncode != 0:
-            return RuntimeActionOutcome("failed", "oMLX start command returned an error.")
+            return RuntimeActionOutcome(
+                "failed",
+                f"oMLX start command exited with status {completed.returncode}. "
+                "Inspect the oMLX service logs for the underlying failure.",
+            )
         for _ in range(40):
             if OmlxRuntimeAdapter().probe().service_available:
                 return RuntimeActionOutcome("completed", "oMLX started successfully.")
             time.sleep(0.25)
-        return RuntimeActionOutcome("failed", "oMLX did not become ready after start.")
+        return RuntimeActionOutcome(
+            "failed",
+            "oMLX start returned successfully, but the configured model-inventory API "
+            "did not become ready. Check the oMLX server logs, service configuration, "
+            "API authorization, and port binding.",
+        )
 
     def refresh_after_acquisition(self, legacy: Any) -> RuntimeActionOutcome:
         probe = OmlxRuntimeAdapter().probe()
@@ -113,10 +130,22 @@ class OmlxRuntimeActions(_BaseActions):
                 timeout=60,
                 check=False,
             )
+        except subprocess.TimeoutExpired:
+            return RuntimeActionOutcome(
+                "failed",
+                "oMLX model refresh timed out. Inspect the oMLX service logs.",
+            )
         except (OSError, subprocess.SubprocessError):
-            return RuntimeActionOutcome("failed", "oMLX model refresh failed.")
+            return RuntimeActionOutcome(
+                "failed",
+                "oMLX model refresh could not execute. Inspect the oMLX service logs.",
+            )
         if completed.returncode != 0:
-            return RuntimeActionOutcome("failed", "oMLX model refresh command returned an error.")
+            return RuntimeActionOutcome(
+                "failed",
+                f"oMLX model refresh exited with status {completed.returncode}. "
+                "Inspect the oMLX service logs.",
+            )
         for _ in range(40):
             if OmlxRuntimeAdapter().probe().service_available:
                 return RuntimeActionOutcome(
@@ -124,7 +153,11 @@ class OmlxRuntimeActions(_BaseActions):
                     "oMLX refreshed its model inventory after acquisition.",
                 )
             time.sleep(0.25)
-        return RuntimeActionOutcome("failed", "oMLX did not become ready after refresh.")
+        return RuntimeActionOutcome(
+            "failed",
+            "oMLX refresh returned successfully, but the configured model-inventory API "
+            "did not become ready. Check the service logs, authorization, and port binding.",
+        )
 
 
 class OllamaRuntimeActions(_BaseActions):
