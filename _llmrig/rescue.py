@@ -66,7 +66,10 @@ def _http(base: str, endpoint: str, payload: Optional[Dict[str, Any]] = None,
         headers={"Content-Type": "application/json", "Accept": "application/json"},
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        # Do not route even synthetic agent-protocol probes via HTTP_PROXY.
+        # The endpoint is validated as loopback by local_host().
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(request, timeout=timeout) as response:
             body = response.read(_MAX_RESPONSE_BYTES + 1)
         if len(body) > _MAX_RESPONSE_BYTES:
             raise RescueError("Ollama response exceeded size limit")
