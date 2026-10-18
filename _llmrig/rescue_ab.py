@@ -263,6 +263,31 @@ def compare(model: str, baseline_context: int, candidate_context: int,
     result["status"] = "completed" if completed else (
         "stopped_on_boundary_violation" if halted_for_safety else "budget_exhausted"
     )
+    def _solution_evidence(trial: Dict[str, Any]) -> bool:
+        """Observed answer evidence, even if the agent later timed out.
+
+        This is explicitly NOT a completed or independently executed fix.
+        Keep syntax graders separate from final agent process status.
+        """
+        checks = trial.get("checks") or {}
+        return all(checks.get(key) is True for key in (
+            "read_tool_completed", "correct_return_proposed",
+            "valid_event_stream", "no_disallowed_tool_observed",
+            "fixture_unchanged",
+        ))
+
+    def _explanation_only_miss(trial: Dict[str, Any]) -> bool:
+        checks = trial.get("checks") or {}
+        return (
+            trial.get("failure_category") == "task_requirements_not_met"
+            and checks.get("bug_explained") is False
+            and all(checks.get(key) is True for key in (
+                "read_tool_completed", "correct_return_proposed",
+                "no_disallowed_tool_observed", "no_error_event",
+                "valid_event_stream", "process_exit_zero", "fixture_unchanged",
+            ))
+        )
+
     group = []
     for context in (baseline_context, candidate_context):
         subset = [t for t in trials if t["context_tokens"] == context]
@@ -272,6 +297,14 @@ def compare(model: str, baseline_context: int, candidate_context: int,
             "observed_passes": successes,
             "observed_trials": len(subset),
             "observed_pass_rate": round(successes / len(subset), 4) if subset else None,
+            # Independent facets of the same sessions. A timeout may preserve
+            # correct answer evidence, but can never become a strict task pass.
+            "solution_evidence_seen": sum(_solution_evidence(t) for t in subset),
+            "process_exits_successful": sum(
+                (t.get("checks") or {}).get("process_exit_zero") is True for t in subset
+            ),
+            "agent_timeouts": sum(t.get("failure_category") == "agent_timeout" for t in subset),
+            "explanation_rubric_only_misses": sum(_explanation_only_miss(t) for t in subset),
             "failures_by_category": {
                 reason: sum(t["failure_category"] == reason for t in subset)
                 for reason in sorted(set(t["failure_category"] for t in subset if t["failure_category"]))
@@ -283,6 +316,13 @@ def compare(model: str, baseline_context: int, candidate_context: int,
         delta = round(b["observed_pass_rate"] - a["observed_pass_rate"], 4)
         result["observed_comparison"] = {
             "candidate_minus_baseline_pass_rate": delta,
+            "comparison_metric": "strict_task_passes_including_successful_agent_exit",
+            "candidate_minus_baseline_successful_exits": (
+                b["process_exits_successful"] - a["process_exits_successful"]
+            ),
+            "candidate_minus_baseline_solution_evidence": (
+                b["solution_evidence_seen"] - a["solution_evidence_seen"]
+            ),
             "assessment": (
                 "candidate_observed_more_passes" if delta > 0 else
                 "candidate_observed_fewer_passes" if delta < 0 else
