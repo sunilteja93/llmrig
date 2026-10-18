@@ -128,6 +128,13 @@ class RescueTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {"OLLAMA_HOST": host}):
                 self.assertIn(":11434", REAL_LOCAL_HOST())
 
+    def test_local_http_redirects_are_rejected(self):
+        handler = rescue._NoRedirect()
+        with self.assertRaises(rescue.RescueError):
+            handler.redirect_request(
+                None, None, 302, "Found", {}, "https://external.example/api/chat"
+            )
+
     def test_transport_error_is_failure_not_fabricated_success(self):
         def failing(base, endpoint, payload=None, timeout=8):
             if endpoint == "/api/chat":
