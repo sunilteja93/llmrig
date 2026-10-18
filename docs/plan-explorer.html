@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LLMRig | Plan Explorer</title>
+<meta name="description" content="Explore real LLMRig model compatibility evidence locally, no uploads.">
+<style>
+:root{color-scheme:dark;--bg:#070b13;--fg:#ecf6ff;--panel:#121e2e;--line:#31506b;--quiet:#a7bdd1;--mint:#59e1bd}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,Segoe UI,sans-serif}
+main{max-width:1100px;margin:auto;padding:42px 20px 80px}
+h1{font-size:clamp(2rem,5vw,3.5rem);letter-spacing:-.04em;margin:8px 0}.kicker{font-size:.8rem;color:var(--mint);letter-spacing:.15em;font-weight:800}
+p{color:var(--quiet);max-width:74ch}code{color:#dfffe5}.panel,.candidate{border:1px solid var(--line);border-radius:16px;background:var(--panel);padding:20px;margin-top:18px}
+textarea{display:block;min-height:130px;width:100%;border:1px solid #4e6580;border-radius:10px;padding:14px;background:#07101c;color:var(--fg);resize:vertical;font:13px/1.5 ui-monospace,monospace}
+button{border:0;border-radius:9px;padding:12px 16px;margin-top:12px;background:var(--mint);color:#04211a;font-weight:800;cursor:pointer}
+input[type=file]{color:var(--quiet);max-width:100%}button:focus-visible,textarea:focus-visible{outline:3px solid #85caff;outline-offset:3px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:14px}.info{display:flex;flex-wrap:wrap;gap:12px;margin:18px 0}
+.chip{display:inline-block;border:1px solid var(--line);padding:6px 10px;border-radius:40px;color:var(--quiet);font-size:.85rem}
+.label{font-size:.73rem;text-transform:uppercase;letter-spacing:.12em;color:var(--quiet);margin-top:10px}
+strong{overflow-wrap:anywhere}ul{padding-left:20px}li{margin-bottom:5px;color:var(--quiet)}.state{color:var(--mint);font-weight:700}
+#error{color:#ffcc9d}#result{display:none}.notice{border-left:3px solid var(--mint);padding-left:12px}
+footer{margin-top:32px;font-size:.9rem}a{color:#8acaff}
+</style>
+</head>
+<body><main>
+<div class="kicker">LLMRIG / LOCAL EVIDENCE</div>
+<h1>Explore a real model plan.</h1>
+<p>Compare runtime candidates, memory-fit assessments, and blockers using a locally produced LLMRig plan. No model weights, code execution, remote lookup, analytics, or uploads occur in this browser.</p>
+<section class="panel" aria-label="Load a plan">
+<p>First run <code>llmrig plan OWNER/MODEL --json</code> and save the output to a local JSON file.</p>
+<label for="file"><strong>Open local plan JSON:</strong></label>
+<input id="file" type="file" accept=".json,application/json">
+<p>Alternatively paste plan JSON:</p>
+<textarea id="json" placeholder="Paste an LLMRig plan JSON file" spellcheck="false"></textarea>
+<button type="button" id="inspect">Explore plan</button>
+<p id="error" role="alert" aria-live="polite"></p>
+</section>
+<section id="result" aria-live="polite">
+<h2 id="model"></h2><div class="info" id="summary"></div>
+<p class="notice" id="reason"></p>
+<h2>Runtime and artifact candidates</h2>
+<div class="grid" id="candidates"></div>
+<div class="panel"><h2>Plan blockers</h2><ul id="blockers"></ul></div>
+<footer>These are planner assessments, not benchmark results or proof that the model ran. Nothing here authorizes or performs an installation. Review fields before sharing screenshots. <a href="https://github.com/sunilteja93/llmrig">Source and docs</a>.</footer>
+</section>
+</main><script>
+(function() {
+"use strict";
+var textarea=document.getElementById("json"),file=document.getElementById("file"),error=document.getElementById("error");
+function addText(parent,tag,text,klass) {var el=document.createElement(tag);el.textContent=String(text);if(klass)el.className=klass;parent.appendChild(el);return el;}
+function addList(target,entries) {target.replaceChildren();if(!entries.length){addText(target,"li","None recorded.");return;}entries.slice(0,30).forEach(function(text){addText(target,"li",String(text).slice(0,400))});}
+function explore(obj) {
+  if(!obj||typeof obj!=="object"||!Array.isArray(obj.candidates)||!obj.recommendation||typeof obj.model!=="string")
+    throw new Error("This is not an LLMRig Autopilot plan.");
+  if(obj.candidates.length>150)throw new Error("Too many candidates for a browser preview.");
+  var root=document.getElementById("result"),grid=document.getElementById("candidates"),summary=document.getElementById("summary");
+  grid.replaceChildren();summary.replaceChildren();
+  document.getElementById("model").textContent=obj.logical_model_id||obj.model;
+  var fields=[["Status",obj.recommendation.status||"unknown"],["Candidates",obj.candidates.length],["Plan",obj.blocked?"Blocked":"Review required"]];
+  fields.forEach(function(f){addText(summary,"span",f[0]+": "+f[1],"chip")});
+  document.getElementById("reason").textContent=String(obj.recommendation.reason||"No recommendation reason recorded.").slice(0,700);
+  obj.candidates.forEach(function(c){
+    var card=document.createElement("article");card.className="candidate";
+    addText(card,"h3",c.runtime||"Unknown runtime");
+    addText(card,"div",String(c.artifact_format||"Unknown format")+" · "+String(c.quantization||"Unknown quantization"),"chip");
+    var states=c.states&&typeof c.states==="object"?c.states:{};
+    [["Memory / fit",states.compatibility],["Local artifact",states.local_availability],["Executable",states.execution],["Discovery",states.discovery]].forEach(function(f){
+      addText(card,"div",f[0],"label");addText(card,"div",f[1]||"unknown","state");
+    });
+    addText(card,"div","Candidate blockers","label");
+    var list=document.createElement("ul");addList(list,Array.isArray(c.blockers)?c.blockers:[]);card.appendChild(list);grid.appendChild(card);
+  });
+  addList(document.getElementById("blockers"),Array.isArray(obj.blockers)?obj.blockers:[]);
+  error.textContent="";root.style.display="block";
+}
+document.getElementById("inspect").addEventListener("click",function(){
+try{explore(JSON.parse(textarea.value));}catch(e){error.textContent=e instanceof SyntaxError?"Invalid JSON.":e.message;document.getElementById("result").style.display="none";}
+});
+file.addEventListener("change",function(){
+if(!file.files||!file.files[0])return;
+if(file.files[0].size>2000000){error.textContent="Plan file exceeds 2 MB.";return;}
+var reader=new FileReader();reader.onload=function(){textarea.value=reader.result;document.getElementById("inspect").click()};
+reader.onerror=function(){error.textContent="Could not read file."};reader.readAsText(file.files[0]);
+});
+})();
+</script></body></html>
