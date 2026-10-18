@@ -101,12 +101,14 @@
     try {render(JSON.parse(editor.value),false);}
     catch(e) {error.textContent="Unable to render: "+(e instanceof SyntaxError?"Invalid JSON.":e.message);view.style.display="none";}
   }
+  editor.addEventListener("input",function(){view.style.display="none";error.textContent="";});
   document.getElementById("open").addEventListener("click",fromInput);
   file.addEventListener("change",function(){
     if(!file.files||!file.files[0])return;
+    view.style.display="none";error.textContent="";
     if(file.files[0].size>256000){error.textContent="File is too large for a Rig Report.";return;}
     var reader=new FileReader();
-    reader.onload=function(){editor.value=reader.result;fromInput();};
+    reader.onload=function(){editor.value=reader.result;error.textContent="Report loaded. Click View report to display it.";};
     reader.onerror=function(){error.textContent="Unable to read that file."};
     reader.readAsText(file.files[0]);
   });
