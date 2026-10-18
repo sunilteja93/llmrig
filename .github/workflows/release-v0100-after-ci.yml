@@ -1,0 +1,72 @@
+name: Publish v0.10.0 release after passing main CI
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  release-v0100:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      VERIFIED_SHA: ${{ github.event.workflow_run.head_sha }}
+      RELEASE_TAG: v0.10.0
+
+    steps:
+      - name: Check out main after required CI success
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact version, safe commit and release uniqueness
+        shell: bash
+        run: |
+          set -euo pipefail
+          CURRENT_SHA="$(git rev-parse HEAD)"
+          test "$CURRENT_SHA" = "$VERIFIED_SHA"
+          python - <<'PY'
+          from pathlib import Path
+          import llmrig
+
+          assert llmrig.VERSION == "0.10.0", llmrig.VERSION
+          assert "## 0.10.0 - 2026-10-18" in Path("CHANGELOG.md").read_text()
+          assert "version: 0.10.0" in Path("CITATION.cff").read_text()
+          assert Path("docs/RELEASE_NOTES_v0.10.0.md").is_file()
+          PY
+          if gh api "repos/$REPO/git/ref/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "A matching or conflicting release tag already exists; refusing to move it."
+            exit 1
+          fi
+          if gh release view "$RELEASE_TAG" --repo "$REPO" >/dev/null 2>&1; then
+            echo "The release already exists; refusing to republish."
+            exit 1
+          fi
+
+      - name: Create tagged GitHub Release with explicit reviewed notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" --repo "$REPO" \
+            --target "$VERIFIED_SHA" \
+            --title "LLMRig v0.10.0: Verified Autopilot and Rig Reports" \
+            --notes-file docs/RELEASE_NOTES_v0.10.0.md
+          gh release view "$RELEASE_TAG" --repo "$REPO" --json tagName,url,publishedAt
+
+      - name: Dispatch the existing trusted-PyPI publishing workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Release events created by GITHUB_TOKEN do not start other workflows.
+          # Explicit workflow_dispatch is the supported GitHub exception.
+          gh workflow run publish-to-pypi.yml --repo "$REPO" --ref main -f tag="$RELEASE_TAG"
+          echo "Trusted PyPI workflow dispatched. No raw token is used for PyPI."
