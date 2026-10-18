@@ -85,21 +85,53 @@ user-generated JSON reports locally. After your own successful
 open the viewer in a local browser and click **View report** to produce
 a shareable, inspectable card.
 
-## Experimental: Rescue protocol diagnostics
+## New in v0.11.0: Rescue for local coding agents (experimental)
 
-LLMRig is building a reproducible **diagnose → reproduce → verify**
-workflow for local AI agents. The first Rescue implementation is on a
-development branch; **it is not included in the PyPI v0.10.0 release**.
+**LLMRig Rescue** diagnoses Ollama + OpenCode failures, including cases where
+an agent *proposes the expected fix but continues running until timeout*.
+It uses isolated, **read-only coding fixtures**, privacy-filtered event traces,
+and explicit opt-in experiments. No existing user project is opened.
 
-It checks whether an OpenCode executable is present, confirms a specified
-Ollama model is installed, and, **only with explicit `--probe`**, measures
-a synthetic tool-call canary at one or two context sizes. It does not run
-OpenCode, edit your configuration, download model weights or claim to
-have repaired an agent. Reports omit raw model output and user files.
+On one Apple M4 Max (48 GiB), using **OpenCode 1.19.3, Ollama 0.33.3 and
+`qwen3.8:27b-mlx`**, a controlled comparison at **4K OpenCode-declared
+context** recorded **3/3 timeouts** with default automatic compaction versus
+**3/3 completed tasks** with compaction explicitly disabled. All six runs
+produced the expected correction evidence. This is a small, locally
+self-reported result, **not proof of a compaction bug or a broadly safe fix**.
+Ollama's effective per-request context and OpenCode compaction events were
+not independently verified.
 
-Read the [Rescue design and experimental CLI guide](https://github.com/sunilteja93/llmrig/blob/main/docs/RESCUE.md).
-A real end-to-end coding-task repair must be independently demonstrated
-before we make that claim.
+~~~bash
+# Read-only preflight (does not execute OpenCode)
+llmrig rescue --agent opencode --model qwen3.8:27b-mlx
+
+# Explicitly run one disposable read-only coding task
+llmrig rescue --agent opencode --model qwen3.8:27b-mlx \
+  --context 4096 --agent-test --agent-timeout 90
+
+# Exploratory paired test: 3 tasks, both compaction settings (6 sessions)
+llmrig rescue --agent opencode --model qwen3.8:27b-mlx \
+  --context 4096 --compaction-ab --compaction-repeats 1 \
+  --agent-timeout 90 --ab-budget 600 \
+  --output rescue-compaction-paired.json
+~~~
+
+The A/B report separately tracks correct-fix evidence, successful exits,
+timeouts and explanation-only rubric misses. It classifies a **suspected
+compaction-associated post-answer continuation** only when all three
+default-compaction trials time out after generating the correction and all
+three compaction-disabled trials pass. This is a **diagnostic signature,
+not an established root cause**.
+
+Compaction is often important for long sessions. **LLMRig never changes your
+OpenCode settings automatically or recommends disabling compaction globally.**
+The temporary read-only permissions are not an OS sandbox; OpenCode remains a
+third-party executable running with your user privileges.
+
+See [the detailed Rescue guide](https://github.com/sunilteja93/llmrig/blob/main/docs/RESCUE.md)
+for model prerequisites, offline receipt comparison, controlled task-suite
+details and known limits.
+
 
 ## Why LLMRig
 
