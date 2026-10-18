@@ -219,6 +219,50 @@ The privacy-safe event summary, file-integrity checks, process timeout
 and deny-by-default agent permissions are unchanged. This is an
 **experimental diagnosis**, never an automatic user configuration change.
 
+## Offline review of repeated compaction evidence (no inference)
+
+Once you have run the *same* single-task Rescue fixture several times with
+default compaction and with explicit `--agent-no-auto-compact`, analyze
+existing receipts without any new model inference, agent execution, or
+configuration changes:
+
+```bash
+llmrig rescue-evidence \
+  --baseline rescue-4k-trace90.json \
+  --baseline rescue-4k-timeout180.json \
+  --candidate rescue-4k-compaction-off.json \
+  --candidate rescue-4k-compaction-off-run2.json \
+  --candidate rescue-4k-compaction-off-run3.json \
+  --output rescue-compaction-assessment.json
+```
+
+This reads **only the explicitly named local JSON reports** and generates a
+new privacy-filtered summary without overwriting prior reports. The command
+checks for identical model, declared context, task ID, fixture SHA-256, no
+agent step-limit confounds, valid integrity checks and exactly one reported
+configuration difference (default versus explicitly disabled automatic
+compaction). Duplicate report paths and unsupported/missing receipt fields
+are rejected. Up to ten unique reports per side may be compared.
+
+The result separately counts strict passes, timeouts with provisional
+correct-fix evidence, process exits and boundary violations. For exploratory
+triage only, it labels results `repeated_mitigation_observed_not_causally_verified`
+when **at least two baseline runs** timed out after producing correction
+evidence and **at least three candidate runs** strictly passed, with no
+boundary violations. Otherwise it is `inconclusive_or_mixed_evidence`.
+
+**These numerical thresholds are simple engineering triage criteria, not
+a statistical test or approval to disable automatic compaction globally.**
+All reports are self-reported and not independently signed. Trial order,
+execution budgets, Ollama's effective context and other possible confounds
+are not reconstructed. Automatic compaction is often needed for long agent
+tasks; turning it off can cause context-window exhaustion.
+
+The report recommendation is always
+`no_automatic_or_global_compaction_change`, even if the exploratory
+criterion is met. To investigate causality, perform independent alternating
+on/off trials with comparable budgets and multiple workloads.
+
 ## Experimental A/B coding-task verification
 
 LLMRig can run an **opt-in exploratory A/B trial** using three fixed read-only
