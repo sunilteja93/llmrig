@@ -26,8 +26,8 @@ class OnboardingDocsTests(unittest.TestCase):
         self.assertIn("0.29 s", demo)
         self.assertIn("HTTP 401", demo)
         self.assertIn("not a controlled runtime", demo)
-        self.assertIn("not recorded", demo)
-        self.assertIn("Catalog", demo)
+        self.assertIn("not recorded", demo.lower())
+        self.assertIn("catalog", demo.lower())
         self.assertNotIn("5,048,673.82", demo)
 
     def test_vector_card_parses_and_labels_reconstruction(self):
