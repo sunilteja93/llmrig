@@ -149,5 +149,33 @@ def format_markdown(report: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def format_terminal(report: Mapping[str, Any]) -> str:
+    """Human-friendly local summary, distinct from opt-in Markdown sharing."""
+    lines = [
+        "LLMRig Rig Report",
+        "=================",
+        "Model:   " + str(report["model"]),
+        "Runtime: " + str(report["runtime"]),
+        "Status:  " + str(report["status"]),
+    ]
+    measurements = report.get("verification")
+    if measurements:
+        lines.append("Measured runs: " + str(measurements["runs"]))
+        if measurements.get("generation_tps") is not None:
+            lines.append("Generation: " + str(measurements["generation_tps"]) + " tokens/s")
+        if measurements.get("prompt_eval_tps") is not None:
+            lines.append("Prompt: " + str(measurements["prompt_eval_tps"]) + " tokens/s")
+    else:
+        lines.append("Measured verification: not recorded")
+    lines.extend([
+        "",
+        "Self-reported local evidence; not a model-quality claim.",
+        "To create a portable Markdown card: llmrig report --share",
+        "No data was uploaded.",
+        "",
+    ])
+    return "\n".join(lines)
+
+
 def format_json(report: Mapping[str, Any]) -> str:
     return json.dumps(dict(report), indent=2, sort_keys=True) + "\n"
