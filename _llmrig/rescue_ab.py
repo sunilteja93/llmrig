@@ -127,12 +127,13 @@ def _grade_events(raw: bytes, task: Task, workspace: Path
     }, count
 
 
-def _trial(model: str, context: int, task: Task, seconds: int
-           ) -> Dict[str, Any]:
+def _trial(model: str, context: int, task: Task, seconds: int,
+           disable_auto_compaction: bool = False) -> Dict[str, Any]:
     """Run a single fixed task with a fresh project and fresh HOME."""
     outcome: Dict[str, Any] = {
         "task_id": task.task_id,
         "context_tokens": context,
+        "auto_compaction_disabled": disable_auto_compaction,
         "status": "failed",
         "checks": {},
         "events_seen": 0,
@@ -151,7 +152,9 @@ def _trial(model: str, context: int, task: Task, seconds: int
         (home / "empty-opencode").mkdir()
         fixture = workspace / task.filename
         fixture.write_text(task.source, encoding="utf-8")
-        config = _configuration(model, context)
+        config = _configuration(
+            model, context, disable_auto_compaction=disable_auto_compaction
+        )
         (workspace / "opencode.json").write_text(json.dumps(config), encoding="utf-8")
         original = _sha(fixture.read_bytes())
         opencode = shutil.which("opencode")
