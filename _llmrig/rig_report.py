@@ -28,6 +28,22 @@ def _public_string(value: Any, label: str, *, identity: bool = False) -> str:
     return cleaned
 
 
+def _public_ollama_tag(candidate: Mapping[str, Any], runtime: str) -> Optional[str]:
+    """Expose only a constrained, opt-in Ollama tag, never a private locator."""
+    if runtime != "ollama":
+        return None
+    value = candidate.get("artifact_id")
+    if not isinstance(value, str) or not re.fullmatch(
+        r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*(?::[A-Za-z0-9_.-]+)?",
+        value,
+    ) or any(part in {".", ".."} for part in value.split(":", 1)[0].split("/")):
+        return None
+    try:
+        return _public_string(value, "Ollama model tag", identity=True)
+    except ValueError:
+        return None
+
+
 def _number(payload: Mapping[str, Any], key: str) -> Optional[float]:
     value = payload.get(key)
     if value is None:
@@ -84,6 +100,7 @@ def build_share_report(receipt: Mapping[str, Any]) -> Dict[str, Any]:
         "project": "LLMRig",
         "model": model,
         "runtime": runtime,
+        "ollama_model_tag": _public_ollama_tag(candidate, runtime),
         "artifact_format": fmt,
         "quantization": quantization,
         "artifact_revision": artifact_revision,
@@ -111,6 +128,9 @@ def format_markdown(report: Mapping[str, Any]) -> str:
         "**Format:** " + _markdown_value(report["artifact_format"]),
         "**Status:** " + _markdown_value(report["status"]),
     ]
+    if report.get("ollama_model_tag") is not None:
+        lines.append("**Ollama model tag:** " + _markdown_value(report["ollama_model_tag"]))
+        lines.append("**Format note:** Catalog-derived format is not runtime-verified quantization.")
     for key, title in (
         ("quantization", "Quantization"),
         ("artifact_revision", "Artifact revision"),
@@ -172,6 +192,9 @@ def format_terminal(report: Mapping[str, Any]) -> str:
         "Runtime: " + str(report["runtime"]),
         "Status:  " + str(report["status"]),
     ]
+    if report.get("ollama_model_tag") is not None:
+        lines.append("Ollama tag: " + str(report["ollama_model_tag"]))
+        lines.append("Catalog format is not runtime-verified quantization.")
     measurements = report.get("verification")
     if measurements:
         lines.append("Measured runs: " + str(measurements["runs"]))
