@@ -1,8 +1,9 @@
 # LLMRig Rescue: protocol preflight (experimental)
 
-**Status:** implemented on the feature branch, not part of PyPI v0.10.0.
-This is the **first working substrate** of the Rescue initiative. It is not
-an end-to-end autonomous OpenCode repair engine.
+**Status:** experimental implementation merged to `main`, not part of the
+published PyPI v0.10.0 artifact. Install from source to try it.
+It includes an opt-in, real OpenCode coding-task evaluator, but is **not**
+an autonomous OpenCode repair engine.
 
 ## What this version actually does
 
@@ -107,6 +108,11 @@ stream for all of the following:
 - No other than read, glob, grep or list tool was observed.
 - The agent exited successfully, emitted no error event and provided
   a valid bounded event stream.
+
+Rescue switches from preflight-only uncertainty to the measured agent
+evaluation status after a task run, even when the task fails. Its terminal
+header identifies whether evidence came from preflight, a synthetic Ollama
+protocol canary, or an actual OpenCode coding-task evaluation.
 
 Reports include check booleans, duration, event count, failure category
 and an SHA-256 digest of the synthetic fixture. **Raw agent text, prompts,
