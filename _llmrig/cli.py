@@ -6,6 +6,7 @@ import argparse
 import json
 import sys
 from dataclasses import replace
+from pathlib import Path
 from typing import Optional, Sequence
 
 from .autopilot_apply import (
@@ -17,6 +18,8 @@ from .autopilot_apply import (
 from .autopilot_evidence import record_receipt_evidence
 from .autopilot_plan import AutopilotExecutionPlan, build_autopilot_plan
 from .hf_bridge import hf_metadata_for_legacy
+from .guidance import diagnosis, next_steps
+from .rig_report import build_share_report, format_json as format_report_json, format_markdown
 from .omlx_acquisition_provenance import omlx_acquisition_for_legacy
 from .omlx_verify import omlx_verify_for_legacy
 from .runtime_adapters import RuntimeProbe, probe_runtimes
@@ -171,6 +174,27 @@ def _verify_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _doctor_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="llmrig doctor", description="Read-only runtime and model readiness guidance."
+    )
+    parser.add_argument("model", nargs="?", help="Optional model repository to diagnose.")
+    parser.add_argument("--context", type=int, default=None)
+    parser.add_argument("--json", action="store_true")
+    return parser
+
+
+def _report_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="llmrig report", description="Create a privacy-filtered Rig Report from a receipt."
+    )
+    parser.add_argument("receipt", nargs="?", default="latest")
+    parser.add_argument("--share", action="store_true", help="Render a portable, self-reported summary.")
+    parser.add_argument("--json", action="store_true", help="Output a whitelisted JSON report.")
+    parser.add_argument("--output", help="Save to a new file rather than stdout; never overwrite.")
+    return parser
+
+
 def _build_plan(model: str, context: Optional[int], legacy: object) -> AutopilotExecutionPlan:
     if context is not None and context <= 0:
         raise ValueError("--context must be a positive integer")
@@ -239,6 +263,9 @@ def _print_plan(plan: AutopilotExecutionPlan) -> None:
         print("\nUnknowns")
         for unknown in plan.unknowns:
             print(f"- {unknown}")
+    print("\nNext steps")
+    for step in next_steps(plan):
+        print("- " + step)
     print("\nNo action has been taken.")
 
 
@@ -266,6 +293,60 @@ def _print_receipt(receipt: AutopilotReceipt) -> None:
             print(f"Latency:    {result.total_latency_s} s")
         print(f"Runs:       {result.measured_runs}")
     print("\nReceipt contains no private filesystem locator or secret.")
+    if receipt.status == "completed" and receipt.verification is not None:
+        print("Create a privacy-filtered Rig Report: llmrig report --share")
+
+
+def command_report(args: argparse.Namespace) -> int:
+    try:
+        payload = load_receipt(args.receipt)
+        report = build_share_report(payload)
+        body = format_report_json(report) if args.json else format_markdown(report)
+    except (ApplyError, ValueError) as exc:
+        print(f"llmrig report: {exc}", file=sys.stderr)
+        return 2
+
+    if args.output:
+        try:
+            with Path(args.output).open("x", encoding="utf-8") as dest:
+                dest.write(body)
+        except OSError as exc:
+            print(f"llmrig report: unable to create output file ({exc.__class__.__name__})", file=sys.stderr)
+            return 2
+        print("Rig Report saved to the requested file. Nothing was uploaded.")
+    else:
+        print(body, end="")
+    return 0
+
+
+def command_doctor(args: argparse.Namespace, legacy: object) -> int:
+    if not args.model:
+        payload = _runtime_payload()
+        if args.json:
+            print(json.dumps(payload, indent=2))
+        else:
+            _print_runtime_table(payload)
+            print("\nFor model-specific advice: llmrig doctor OWNER/MODEL")
+        return 0
+    try:
+        plan = _build_plan(args.model, args.context, legacy)
+    except (ValueError, legacy.SolveInputError) as exc:
+        print(f"llmrig doctor: {exc}", file=sys.stderr)
+        return 2
+    except legacy.SolveEngineError as exc:
+        print(f"llmrig doctor: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(diagnosis(plan), indent=2))
+    else:
+        print("\nLLMRig Doctor (read-only)")
+        print("========================")
+        print("Model: " + (plan.logical_model_id or plan.model))
+        print("Status: " + diagnosis(plan)["status"])
+        for step in next_steps(plan):
+            print("- " + step)
+        print("\nNo action has been taken.")
+    return 0
 
 
 def command_runtimes(args: argparse.Namespace) -> int:
@@ -493,6 +574,8 @@ def _print_augmented_help() -> int:
     print("  apply MODEL         Apply an exact matching plan after explicit approval.")
     print("  verify [RECEIPT]    Re-observe and re-verify current state from a receipt.")
     print("  run MODEL           Plan, approve, apply, and verify in one workflow.")
+    print("  doctor [MODEL]      Read-only diagnosis with actionable next steps.")
+    print("  report [RECEIPT]    Privacy-filtered, shareable verification report.")
     return 0
 
 
@@ -500,16 +583,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     values = list(sys.argv[1:] if argv is None else argv)
     if values and values[0] == "runtimes":
         return command_runtimes(_runtimes_parser().parse_args(values[1:]))
+    if values and values[0] == "report":
+        return command_report(_report_parser().parse_args(values[1:]))
     if values in (["--help"], ["-h"]):
         return _print_augmented_help()
 
     import llmrig as legacy
 
     with hf_metadata_for_legacy(legacy):
-        if values and values[0] in {"plan", "apply", "verify", "run", "solve"}:
+        if values and values[0] in {"plan", "apply", "verify", "run", "solve", "doctor"}:
             with adapter_capabilities_for_legacy(legacy), omlx_verify_for_legacy(
                 legacy
             ), omlx_acquisition_for_legacy(legacy):
+                if values[0] == "doctor":
+                    return command_doctor(_doctor_parser().parse_args(values[1:]), legacy)
                 if values[0] == "plan":
                     return command_plan(_plan_parser().parse_args(values[1:]), legacy)
                 if values[0] == "apply":
