@@ -48,6 +48,17 @@ jobs:
           llmrig --version
           llmrig check
 
+      - name: Verify macOS editable CLI outside checkout
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/llmrig-macos-editable"
+          "$RUNNER_TEMP/llmrig-macos-editable/bin/python" -m pip install -e "$GITHUB_WORKSPACE"
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/llmrig-macos-editable/bin/python" -c "import _llmrig.cli; print(_llmrig.cli.__file__)"
+          "$RUNNER_TEMP/llmrig-macos-editable/bin/llmrig" --help >/dev/null
+          "$RUNNER_TEMP/llmrig-macos-editable/bin/llmrig" runtimes --json >/dev/null
+
       - name: Unit tests
         run: python -m unittest discover -s tests -v
 
