@@ -109,8 +109,25 @@ stream for all of the following:
 - The agent exited successfully, emitted no error event and provided
   a valid bounded event stream.
 
+When a real agent run fails or times out, Rescue also records a
+**privacy-safe structural event sequence**. It counts recognized JSONL event
+categories, a bounded list of tool categories, the position of the first
+recognized corrected statement, and the number/type of later events.
+No arbitrary event names, tool arguments, file paths, raw text or prompt
+content are retained. The terminal prints a short summary for single-task
+runs, and the JSON contains the same whitelisted event telemetry for every
+A/B trial.
+
+A statement matching the expected correction is **provisional answer
+evidence**. It does not prove that the agent finished a turn, ran the
+corrected code, or escaped a tool/continuation loop. A subsequent timeout
+remains a task failure; the diagnostic merely notes whether a correction
+appeared somewhere earlier in the event stream. The event stream does
+not record trustworthy per-event timestamps, and the counters cannot by
+themselves establish the reason for a hang.
+
 Rescue switches from preflight-only uncertainty to the measured agent
-evaluation status after a task run, even when the task fails. Its terminal
+evaluation status after a task run, even when it fails. Its terminal
 header identifies whether evidence came from preflight, a synthetic Ollama
 protocol canary, or an actual OpenCode coding-task evaluation.
 
