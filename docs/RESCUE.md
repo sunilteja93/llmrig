@@ -82,12 +82,59 @@ Only loopback HTTP endpoints (`localhost`, `127.0.0.1` or equivalent
 loopback IPs) with explicit ports are supported. A configured remote
 `OLLAMA_HOST` is refused.
 
+## Automated OpenCode coding task (opt-in, experimental)
+
+Once `opencode` is on your PATH and the exact Ollama model is installed:
+
+```bash
+llmrig rescue --agent opencode --model qwen3.8:27b-mlx \
+  --context 8192 --agent-test --agent-timeout 120 \
+  --output rescue-agent-result.json
+```
+
+Unlike the synthetic Ollama-only `--probe`, `--agent-test` **executes the
+actual OpenCode CLI** in a newly created disposable directory. It asks the
+model to read a tiny file containing an incorrect parity predicate and
+explain the exact correction. No existing user project is opened.
+
+The evaluator checks a structured `opencode run --format json` event
+stream for all of the following:
+
+- The agent invoked a completed `read` tool for the fixture.
+- Its answer both explained the odd-number bug and proposed the
+  exact corrected return statement.
+- The fixture's SHA-256 remained unchanged.
+- No other than read, glob, grep or list tool was observed.
+- The agent exited successfully, emitted no error event and provided
+  a valid bounded event stream.
+
+Reports include check booleans, duration, event count, failure category
+and an SHA-256 digest of the synthetic fixture. **Raw agent text, prompts,
+local paths and event contents are never included in the report.**
+Reports are local only and never overwrite existing files.
+
+**Important security limitation:** OpenCode is real third-party code
+running under your operating-system user. The evaluator sets a temporary
+HOME, isolated XDG directories, only the local Ollama provider, and
+deny-by-default tool permissions. It does **not** impose kernel-enforced
+sandboxing, block all possible outbound network access, or certify
+OpenCode itself. Run only if you trust your installed OpenCode executable.
+Agent session state is created inside the disposable directory and
+removed after the test.
+
+`--agent-test` is mutually exclusive with `--probe` and
+`--compare-context`; it is not automatically invoked by preflight.
+This first evaluator diagnoses a **single small coding task**. It does
+not automatically change OpenCode's configuration, run arbitrary coding
+projects, or prove a repair. Subsequent phases will add versioned
+tasks, explicit counterfactual configurations and comparison evidence.
+
 ## What still needs to be built for the full Rescue vision
 
 **Do not present this feature as a repaired coding agent.** The next phases are:
 
-1. OpenCode integration in a disposable workspace, with an explicit
-   human-approved process invocation and bounded agent task budget.
+1. Additional versioned OpenCode tasks and independent, multi-run reliability
+   measurements beyond the initial parity diagnostic.
 2. Versioned code-edit tasks with independently checked outputs and a
    true baseline-versus-candidate task success comparison.
 3. Supported reversible configuration changes with approval, restore

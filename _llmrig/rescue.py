@@ -235,7 +235,8 @@ def measure(base: str, model: str, context: int, runs: int,
 
 
 def rescue(agent: str, model: str, context: int, runs: int,
-           compare_context: Optional[int], probe: bool) -> Dict[str, Any]:
+           compare_context: Optional[int], probe: bool, agent_test: bool = False,
+           agent_timeout: int = 120) -> Dict[str, Any]:
     if agent != "opencode":
         raise RescueError("only the opencode preflight adapter is supported")
     model = validate_model(model)
@@ -250,9 +251,36 @@ def rescue(agent: str, model: str, context: int, runs: int,
         raise RescueError("--compare-context must differ and be between 256 and 262144")
     if compare_context is not None and not probe:
         raise RescueError("--compare-context requires explicit --probe")
+    if agent_test and (probe or compare_context is not None):
+        raise RescueError("--agent-test is separate from --probe/--compare-context")
+    if isinstance(agent_timeout, bool) or not isinstance(agent_timeout, int) or not 20 <= agent_timeout <= 180:
+        raise RescueError("--agent-timeout must be between 20 and 180 seconds")
     base = local_host()
     report = preflight(agent, model, context, base)
-    if not probe or report["status"] != "ready_for_probe":
+    if report["status"] != "ready_for_probe":
+        return report
+    if agent_test:
+        if not report["agent_executable_detected"]:
+            report["status"] = "blocked"
+            report["blockers"].append("OpenCode executable not detected; no agent run attempted")
+            return report
+        from .rescue_agent import evaluate
+        try:
+            agent_result = evaluate(model, context, seconds=agent_timeout)
+        except ValueError as exc:
+            raise RescueError(str(exc))
+        report["mode"] = "measured_agent_task"
+        report["agent_evaluation"] = agent_result
+        report["status"] = "agent_task_passed" if agent_result["status"] == "passed" else "agent_task_failed"
+        report["local_changes"] = (
+            "Disposable test fixture and isolated OpenCode session state; "
+            "user project and OpenCode configuration not intentionally modified"
+        )
+        report["unknowns"].append(
+            "One synthetic coding-task pass does not prove a configuration repair or broader reliability"
+        )
+        return report
+    if not probe:
         return report
     report["mode"] = "measured_protocol_probe"
     report["local_changes"] = "Ollama inference/model memory use only; no agent config writes"
@@ -304,10 +332,21 @@ def format_terminal(report: Dict[str, Any]) -> str:
             " synthetic tool calls passed"
         )
         lines.append("Outcomes: " + ", ".join(item["outcomes"]))
+    if report.get("agent_evaluation"):
+        evaluation = report["agent_evaluation"]
+        lines.append("Agent coding task: " + evaluation["status"])
+        for name, passed in evaluation["checks"].items():
+            lines.append("  " + name + ": " + ("passed" if passed else "failed"))
+        if evaluation["failure_category"]:
+            lines.append("Failure category: " + evaluation["failure_category"])
+        lines.append("Raw agent events were not included in the report.")
     if report["comparison"]:
         lines.append("Comparison: " + report["comparison"]["assessment"])
         lines.append("Confidence: insufficient to establish agent improvement")
     for item in report["unknowns"]:
         lines.append("Unknown: " + item)
-    lines.append("No OpenCode configuration was read or changed.")
+    if report.get("agent_evaluation"):
+        lines.append("OpenCode ran in a disposable project; this is not an OS sandbox.")
+    else:
+        lines.append("No OpenCode configuration was read or changed.")
     return "\n".join(lines) + "\n"
