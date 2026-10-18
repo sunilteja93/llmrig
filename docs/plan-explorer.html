@@ -28,11 +28,11 @@ footer{margin-top:32px;font-size:.9rem}a{color:#8acaff}
 <p>Compare runtime candidates, memory-fit assessments, and blockers using a locally produced LLMRig plan. No model weights, code execution, remote lookup, analytics, or uploads occur in this browser.</p>
 <section class="panel" aria-label="Load a plan">
 <p>First run <code>llmrig plan OWNER/MODEL --json</code> and save the output to a local JSON file.</p>
-<label for="file"><strong>Open local plan JSON:</strong></label>
+<label for="file"><strong>Select local plan JSON:</strong></label>
 <input id="file" type="file" accept=".json,application/json">
 <p>Alternatively paste plan JSON:</p>
 <textarea id="json" placeholder="Paste an LLMRig plan JSON file" spellcheck="false"></textarea>
-<button type="button" id="inspect">Explore plan</button>
+<button type="button" id="inspect">Explore Plan</button>
 <p id="error" role="alert" aria-live="polite"></p>
 </section>
 <section id="result" aria-live="polite">
@@ -73,13 +73,16 @@ function explore(obj) {
   addList(document.getElementById("blockers"),Array.isArray(obj.blockers)?obj.blockers:[]);
   error.textContent="";root.style.display="block";
 }
+textarea.addEventListener("input",function(){document.getElementById("result").style.display="none";error.textContent="";});
 document.getElementById("inspect").addEventListener("click",function(){
 try{explore(JSON.parse(textarea.value));}catch(e){error.textContent=e instanceof SyntaxError?"Invalid JSON.":e.message;document.getElementById("result").style.display="none";}
 });
 file.addEventListener("change",function(){
 if(!file.files||!file.files[0])return;
+document.getElementById("result").style.display="none";
+error.textContent="";
 if(file.files[0].size>2000000){error.textContent="Plan file exceeds 2 MB.";return;}
-var reader=new FileReader();reader.onload=function(){textarea.value=reader.result;document.getElementById("inspect").click()};
+var reader=new FileReader();reader.onload=function(){textarea.value=reader.result;error.textContent="Plan loaded. Click Explore Plan to view its evidence.";};
 reader.onerror=function(){error.textContent="Could not read file."};reader.readAsText(file.files[0]);
 });
 })();
