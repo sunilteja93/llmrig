@@ -200,7 +200,7 @@ def _rescue_parser() -> argparse.ArgumentParser:
         prog="llmrig rescue",
         description=(
             "Diagnose an OpenCode + local Ollama setup. A synthetic tool-call "
-            "transport canary runs ONLY when --probe is supplied. No agent is executed."
+            "transport canary runs only with --probe; real agent tests require opt-in."
         ),
     )
     parser.add_argument("--agent", choices=["opencode"], required=True)
@@ -228,6 +228,10 @@ def _rescue_parser() -> argparse.ArgumentParser:
         help="Explicitly run one read-only OpenCode coding task in a disposable project.",
     )
     parser.add_argument(
+        "--agent-steps", type=int, default=None,
+        help="Experimental iteration cap in disposable OpenCode agent (2-12; requires --agent-test).",
+    )
+    parser.add_argument(
         "--agent-timeout", type=int, default=120,
         help="Timeout in seconds for --agent-test (20-180).",
     )
@@ -251,6 +255,7 @@ def command_rescue(args: argparse.Namespace) -> int:
             args.compare_context, args.probe,
             agent_test=args.agent_test, agent_timeout=args.agent_timeout,
             ab_test=args.ab_test, ab_repeats=args.ab_repeats, ab_budget=args.ab_budget,
+            agent_steps=args.agent_steps,
         )
     except RescueError as exc:
         print("llmrig rescue: " + str(exc), file=sys.stderr)
