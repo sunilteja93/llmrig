@@ -31,6 +31,7 @@
     .revision-detail summary {cursor:pointer}
     .revision-detail code {display:block;margin-top:6px;overflow-wrap:anywhere;color:var(--text)}
     .metric-note {margin-top:14px;font-size:.87rem;color:var(--muted)}
+    .artifact-subtitle {margin:0 0 14px;color:var(--mint);font:600 .94rem/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}
     #result {display:none}
     #error {color:#ffd4b1;font-weight:600}
     footer {font-size:.85rem;margin-top:24px;color:var(--muted)}
@@ -59,10 +60,12 @@
   <section id="result" class="panel" aria-live="polite">
     <div class="eyebrow">Rig Report <span id="demo"></span></div>
     <h2 id="model"></h2>
+    <p id="artifact-tag" class="artifact-subtitle" hidden></p>
     <span class="pill" id="status"></span>
     <div class="grid" id="metrics"></div>
     <details class="revision-detail" id="revision-details" hidden><summary>Show full artifact revision</summary><code id="revision-value"></code></details>
     <p class="metric-note" id="missing-throughput" hidden></p>
+    <p class="metric-note" id="format-note" hidden></p>
     <footer>
       <p>Numbers are self-reported by an Autopilot receipt, not independently attested. Measured speed is not model quality. Machine hardware is omitted because older receipts do not capture historical machine identity.</p>
       <a href="https://github.com/sunilteja93/llmrig">Explore LLMRig on GitHub</a>
@@ -93,10 +96,16 @@
     if(typeof payload.model!=="string"||typeof payload.runtime!=="string"||typeof payload.status!=="string")throw new Error("The report is missing required fields.");
     var m=document.getElementById("metrics");m.replaceChildren();
     document.getElementById("model").textContent=payload.model.slice(0,200);
+    var tag=document.getElementById("artifact-tag");
+    tag.textContent=payload.runtime==="ollama"&&typeof payload.ollama_model_tag==="string"?"Ollama tag: "+payload.ollama_model_tag.slice(0,256):"";
+    tag.hidden=!tag.textContent;
+    var formatNote=document.getElementById("format-note");
+    formatNote.textContent=payload.runtime==="ollama"?"Catalog format reflects LLMRig model metadata, not runtime-verified quantization.":"";
+    formatNote.hidden=!formatNote.textContent;
     document.getElementById("status").textContent=payload.status.slice(0,80);
     document.getElementById("demo").textContent=isDemo?"(demonstration, not a current machine result)":"";
     field(m,"Runtime",payload.runtime);
-    field(m,"Artifact format",payload.artifact_format);
+    field(m,payload.runtime==="ollama"?"Catalog format":"Artifact format",payload.artifact_format);
     field(m,"Quantization",payload.quantization);
     var revision=typeof payload.artifact_revision==="string"?payload.artifact_revision:"";
     if(revision)field(m,"Revision",revision.length>21?revision.slice(0,12)+"…"+revision.slice(-7):revision);
