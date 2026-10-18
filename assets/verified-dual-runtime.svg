@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="800" viewBox="0 0 1600 800" role="img" aria-labelledby="title desc">
+  <title id="title">LLMRig real validation: oMLX 0.6B and Ollama 27B</title>
+  <desc id="desc">Reconstructed illustration from user-observed completed Autopilot reports on Apple M4 Max. The oMLX run recorded two verification runs with 0.29 seconds latency but no throughput, and the Ollama run recorded two runs with 49.93 tokens per second generation and 2.5861 seconds latency. Not independent attestation or a direct model comparison.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1600" y2="800" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#070F1B"/><stop offset="1" stop-color="#123E49"/>
+    </linearGradient>
+    <style>
+      .sans{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+      .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+      .eyebrow{fill:#5BE6BF;font-size:22px;font-weight:800;letter-spacing:4px}
+      .model{fill:#E9F3FF;font-size:34px;font-weight:760}
+      .sub{fill:#A9BBD1;font-size:22px}
+      .label{fill:#A9BBD1;font-size:19px}
+      .value{fill:#E9F3FF;font-size:32px;font-weight:800}
+      .note{fill:#A9BBD1;font-size:20px}
+    </style>
+  </defs>
+  <rect width="1600" height="800" fill="url(#background)"/>
+  <text class="sans eyebrow" x="70" y="72">LLMRIG / REAL FIRST-RUN EVIDENCE</text>
+  <text class="sans" x="70" y="152" font-size="62" font-weight="800" letter-spacing="-2" fill="#E9F3FF">Two runtimes. Completed verification.</text>
+  <text class="sans sub" x="72" y="194">Apple M4 Max · 48 GiB unified memory · race-v2 · local receipts, not independent benchmarks</text>
+  <rect x="70" y="239" width="706" height="422" rx="24" fill="#111C2C" stroke="#345475" stroke-width="2"/>
+  <rect x="822" y="239" width="706" height="422" rx="24" fill="#111C2C" stroke="#345475" stroke-width="2"/>
+  <text x="104" y="293" class="sans eyebrow" font-size="21">01 / OMLX</text>
+  <text x="856" y="293" class="sans eyebrow" font-size="21">02 / OLLAMA</text>
+  <text x="104" y="341" class="sans model">Qwen3 0.6B · 4-bit</text>
+  <text x="856" y="341" class="sans model">qwen3.8:27b-mlx</text>
+  <rect x="104" y="361" width="148" height="38" rx="19" fill="none" stroke="#5BE6BF" stroke-width="2"/>
+  <text x="124" y="388" class="sans" fill="#5BE6BF" font-size="20" font-weight="700">completed</text>
+  <rect x="856" y="361" width="148" height="38" rx="19" fill="none" stroke="#5BE6BF" stroke-width="2"/>
+  <text x="876" y="388" class="sans" fill="#5BE6BF" font-size="20" font-weight="700">completed</text>
+  <line x1="104" y1="425" x2="742" y2="425" stroke="#345475"/>
+  <line x1="856" y1="425" x2="1494" y2="425" stroke="#345475"/>
+  <text x="104" y="473" class="sans label">Measured runs</text>
+  <text x="104" y="519" class="sans value">2</text>
+  <text x="440" y="473" class="sans label">Reported latency</text>
+  <text x="440" y="519" class="sans value">0.29 s</text>
+  <text x="856" y="473" class="sans label">Measured runs</text>
+  <text x="856" y="519" class="sans value">2</text>
+  <text x="1190" y="473" class="sans label">Reported latency</text>
+  <text x="1190" y="519" class="sans value">2.5861 s</text>
+  <text x="104" y="564" class="sans label">Generation throughput</text>
+  <text x="104" y="612" class="sans value">Not recorded</text>
+  <text x="856" y="564" class="sans label">Generation throughput</text>
+  <text x="856" y="612" class="sans value">49.93 tok/s</text>
+  <text x="70" y="717" class="sans note">Visual reconstruction of real local reports · Different models and workloads are not a controlled comparison</text>
+  <text x="70" y="753" class="mono" fill="#5BE6BF" font-size="19">github.com/sunilteja93/llmrig  ·  docs/VERIFIED_DEMOS.md</text>
+</svg>
