@@ -60,6 +60,11 @@ llmrig rescue --agent opencode \
   --output rescue-result.json
 ```
 
+When you pass `--output`, Rescue saves the whitelisted JSON data and still
+prints each context's observed pass/fail count and comparison assessment.
+You do not need to open the JSON file just to see whether the test passed.
+The summary does not include raw model-generated text.
+
 The baseline and candidate test use the **same installed model** and
 identical synthetic tool-call prompt, changing the requested Ollama
 `num_ctx` value. The report will include observed passes, simple

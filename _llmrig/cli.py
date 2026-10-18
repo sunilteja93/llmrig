@@ -245,6 +245,9 @@ def command_rescue(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 2
+        # Do not hide pass/fail evidence when the user saves a JSON report.
+        # The terminal formatter displays only whitelisted diagnostic fields.
+        print(format_terminal(report), end="")
         print("Rescue report saved locally. No report was uploaded.")
     else:
         print(payload, end="") if args.json else print(format_terminal(report), end="")

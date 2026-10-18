@@ -160,6 +160,26 @@ class RescueTests(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(cli.main(args), 2)
 
+    def test_saved_measured_report_prints_real_outcomes(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(rescue, "_http", side_effect=fake_api):
+            destination = str(Path(tmp) / "rescue-measured.json")
+            args = ["rescue", "--agent", "opencode", "--model", "qwen3.8:27b-mlx",
+                    "--context", "4096", "--compare-context", "8192", "--probe",
+                    "--runs", "3", "--output", destination]
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(cli.main(args), 0)
+            summary = output.getvalue()
+            self.assertIn("Context 4096: 3/3 synthetic tool calls passed", summary)
+            self.assertIn("Context 8192: 3/3 synthetic tool calls passed", summary)
+            self.assertIn("Comparison: no_observed_pass_difference", summary)
+            self.assertIn("No OpenCode configuration was read or changed.", summary)
+            self.assertIn("Rescue report saved locally", summary)
+            self.assertNotIn("/Users/secret", summary)
+            measured = json.loads(Path(destination).read_text(encoding="utf-8"))
+            self.assertEqual([p["tool_call_passes"] for p in measured["probes"]], [3, 3])
+            self.assertNotIn("/Users/secret", json.dumps(measured))
+
     def test_cli_help_exposes_rescue_without_loading_legacy(self):
         with contextlib.redirect_stdout(io.StringIO()) as output:
             with self.assertRaises(SystemExit) as result:
