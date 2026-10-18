@@ -20,7 +20,7 @@
 **Try the current Autopilot features:** the latest GitHub `main` contains
 changes not yet published in PyPI v0.9.3. Install it in an isolated
 [`pipx`](https://pipx.pypa.io/) environment (Git and Python 3.9+ required).
-See the [installation guide](docs/INSTALL.md) for platform-specific setup.
+See the [installation guide](https://github.com/sunilteja93/llmrig/blob/main/docs/INSTALL.md) for platform-specific setup.
 
 ~~~bash
 pipx install 'git+https://github.com/sunilteja93/llmrig.git@main'
@@ -54,7 +54,7 @@ Apple M4 Max (48 GiB) with **oMLX + Qwen3 0.6B** (two measured runs,
 **Ollama + qwen3.8:27b-mlx** (two runs, 49.93 generation tokens/s,
 2.5861 s reported latency). These are different models and workloads,
 **not a speed comparison**. See
-[the reproducible field-run notes](docs/VERIFIED_DEMOS.md)
+[the reproducible field-run notes](https://github.com/sunilteja93/llmrig/blob/main/docs/VERIFIED_DEMOS.md)
 for exact tags, provenance, missing metrics and setup blockers.
 
 Earlier independent LLMRig race-v2 measurements of
@@ -62,10 +62,10 @@ Earlier independent LLMRig race-v2 measurements of
 560.85 generation tokens/s. These observations describe their own
 configuration only and are not predictions for your machine.
 
-Learn more in the [installation guide](docs/INSTALL.md),
-[first-run guide](docs/FIRST_RUN.md),
-[verified Autopilot field runs](docs/VERIFIED_DEMOS.md), and
-[validation matrix](docs/VALIDATION_MATRIX.md).
+Learn more in the [installation guide](https://github.com/sunilteja93/llmrig/blob/main/docs/INSTALL.md),
+[first-run guide](https://github.com/sunilteja93/llmrig/blob/main/docs/FIRST_RUN.md),
+[verified Autopilot field runs](https://github.com/sunilteja93/llmrig/blob/main/docs/VERIFIED_DEMOS.md), and
+[validation matrix](https://github.com/sunilteja93/llmrig/blob/main/docs/VALIDATION_MATRIX.md).
 
 **Installation broken?** See [Troubleshooting](https://github.com/sunilteja93/llmrig/blob/main/docs/TROUBLESHOOTING.md) for recovery from stale virtual environments and missing installed package metadata.
 
@@ -75,13 +75,13 @@ Learn more in the [installation guide](docs/INSTALL.md),
 
 ## Verified local execution
 
-[![Two actual completed LLMRig verification runs, illustrated from local receipts](assets/verified-dual-runtime.svg)](docs/VERIFIED_DEMOS.md)
+[![Two actual completed LLMRig verification runs, illustrated from local receipts](https://raw.githubusercontent.com/sunilteja93/llmrig/main/assets/verified-dual-runtime.svg)](https://github.com/sunilteja93/llmrig/blob/main/docs/VERIFIED_DEMOS.md)
 
 *Illustration reconstructed from measured local reports, not a raw screenshot
 or independent attestation. Missing metrics are not estimated. The two models
 cannot be compared as a controlled runtime speed test.*
 
-The [offline Rig Report viewer](docs/rig-report-viewer.html) renders real
+The [offline Rig Report viewer](https://github.com/sunilteja93/llmrig/blob/main/docs/rig-report-viewer.html) renders real
 user-generated JSON reports locally. After your own successful
 `llmrig run`, generate `llmrig report --json --output rig-report.json`,
 open the viewer in a local browser and click **View report** to produce
@@ -121,7 +121,7 @@ llmrig run MODEL             # approve supported actions, then verify
 
 The `@main` install is a moving unreleased source version. For a
 reproducible installation, pin a Git commit SHA as shown in
-[INSTALL.md](docs/INSTALL.md). The currently published PyPI version
+[INSTALL.md](https://github.com/sunilteja93/llmrig/blob/main/docs/INSTALL.md). The currently published PyPI version
 may have a different command set.
 
 `solve` and `plan` are read-only. Downloads, runtime starts, model loads, and other mutations require explicit approval. For non-interactive automation, use `--yes` only when that intent is deliberate.
@@ -268,7 +268,7 @@ will become the default PyPI recommendation after a tested release.
 
 For macOS, Linux, Windows PowerShell, pinned commits, PATH issues,
 corrupted editable installs and safe oMLX API-key setup, follow
-[**the full installation guide**](docs/INSTALL.md).
+[**the full installation guide**](https://github.com/sunilteja93/llmrig/blob/main/docs/INSTALL.md).
 
 ## Architecture
 
@@ -293,8 +293,8 @@ The north star is **Detect → Decide → Configure → Run → Verify**, with e
 
 - [`CHANGELOG.md`](https://github.com/sunilteja93/llmrig/blob/main/CHANGELOG.md) — canonical release history
 - [`ROADMAP_V1.md`](https://github.com/sunilteja93/llmrig/blob/main/ROADMAP_V1.md) — product direction
-- [`docs/INSTALL.md`](docs/INSTALL.md) — clean install and source/release distinction
-- [`docs/VERIFIED_DEMOS.md`](docs/VERIFIED_DEMOS.md) — real oMLX and Ollama verification transcripts
+- [`docs/INSTALL.md`](https://github.com/sunilteja93/llmrig/blob/main/docs/INSTALL.md) — clean install and source/release distinction
+- [`docs/VERIFIED_DEMOS.md`](https://github.com/sunilteja93/llmrig/blob/main/docs/VERIFIED_DEMOS.md) — real oMLX and Ollama verification transcripts
 - [`RELEASING.md`](https://github.com/sunilteja93/llmrig/blob/main/RELEASING.md) — GitHub Release and PyPI process
 - [`SECURITY.md`](https://github.com/sunilteja93/llmrig/blob/main/SECURITY.md) — security policy and trust boundaries
 - [`CONTRIBUTING.md`](https://github.com/sunilteja93/llmrig/blob/main/CONTRIBUTING.md) — contribution guide
