@@ -19,7 +19,7 @@ def _stream(*, read=True, correct=True, explanation=True, extra_tool=None):
                 "tool": "read",
                 "state": {
                     "status": "completed", "input": {"filePath": "math_ops.py"},
-                    "output": "def is_even(n):\\n    return n % 2 == 1",
+                    "output": "def is_even(n):\n    return n % 2 == 1",
                 },
             },
         })
@@ -34,7 +34,7 @@ def _stream(*, read=True, correct=True, explanation=True, extra_tool=None):
     )
     events.append({"type": "text", "part": {"type": "text", "text": answer}})
     events.append({"type": "step_finish", "part": {"type": "step-finish"}})
-    return ("\\n".join(json.dumps(event) for event in events) + "\\n").encode("utf-8")
+    return ("\n".join(json.dumps(event) for event in events) + "\n").encode("utf-8")
 
 
 class RescueAgentTests(unittest.TestCase):
@@ -64,7 +64,7 @@ class RescueAgentTests(unittest.TestCase):
             self.assertNotEqual(env["HOME"], os.environ.get("HOME"))
             return ("exited", 0, _stream(), False)
 
-        with mock.patch.object(rescue_agent.shutil, "which", return_value="/usr/bin/opencode"), \\
+        with mock.patch.object(rescue_agent.shutil, "which", return_value="/usr/bin/opencode"), \
              mock.patch.object(rescue_agent, "_invoke", side_effect=fake_invoke):
             result = rescue_agent.evaluate("qwen3.8:27b-mlx", 8192)
         self.assertEqual(result["status"], "passed")
@@ -76,7 +76,7 @@ class RescueAgentTests(unittest.TestCase):
         self.assertFalse(result["raw_agent_output_included"])
 
     def test_no_read_is_not_success(self):
-        with mock.patch.object(rescue_agent.shutil, "which", return_value="/usr/bin/opencode"), \\
+        with mock.patch.object(rescue_agent.shutil, "which", return_value="/usr/bin/opencode"), \
              mock.patch.object(rescue_agent, "_invoke",
                                return_value=("exited", 0, _stream(read=False), False)):
             result = rescue_agent.evaluate("qwen3.8:27b-mlx", 8192)
@@ -86,7 +86,7 @@ class RescueAgentTests(unittest.TestCase):
         self.assertEqual(result["failure_category"], "task_requirements_not_met")
 
     def test_wrong_fix_is_not_success(self):
-        with mock.patch.object(rescue_agent.shutil, "which", return_value="/usr/bin/opencode"), \\
+        with mock.patch.object(rescue_agent.shutil, "which", return_value="/usr/bin/opencode"), \
              mock.patch.object(rescue_agent, "_invoke",
                                return_value=("exited", 0, _stream(correct=False), False)):
             result = rescue_agent.evaluate("qwen3.8:27b-mlx", 8192)
@@ -96,7 +96,7 @@ class RescueAgentTests(unittest.TestCase):
     def test_disallowed_tool_event_fails_closed(self):
         checks, _ = rescue_agent._read_events(_stream(extra_tool="bash"))
         self.assertFalse(checks["no_disallowed_tool_observed"])
-        with mock.patch.object(rescue_agent.shutil, "which", return_value="/usr/bin/opencode"), \\
+        with mock.patch.object(rescue_agent.shutil, "which", return_value="/usr/bin/opencode"), \
              mock.patch.object(rescue_agent, "_invoke",
                                return_value=("exited", 0, _stream(extra_tool="bash"), False)):
             result = rescue_agent.evaluate("qwen3.8:27b-mlx", 8192)
@@ -106,14 +106,14 @@ class RescueAgentTests(unittest.TestCase):
         def changed(cmd, cwd, env, seconds):
             (cwd / "math_ops.py").write_text("modified")
             return ("exited", 0, _stream(), False)
-        with mock.patch.object(rescue_agent.shutil, "which", return_value="/usr/bin/opencode"), \\
+        with mock.patch.object(rescue_agent.shutil, "which", return_value="/usr/bin/opencode"), \
              mock.patch.object(rescue_agent, "_invoke", side_effect=changed):
             result = rescue_agent.evaluate("qwen3.8:27b-mlx", 8192)
         self.assertFalse(result["checks"]["fixture_unchanged"])
         self.assertEqual(result["failure_category"], "test_boundary_violation")
 
     def test_agent_errors_are_failures_without_raw_leak(self):
-        with mock.patch.object(rescue_agent.shutil, "which", return_value="/usr/bin/opencode"), \\
+        with mock.patch.object(rescue_agent.shutil, "which", return_value="/usr/bin/opencode"), \
              mock.patch.object(rescue_agent, "_invoke",
                                return_value=("timeout", -9, b"secret /Users/jane", True)):
             result = rescue_agent.evaluate("qwen3.8:27b-mlx", 8192)
@@ -122,12 +122,12 @@ class RescueAgentTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
 
     def test_bad_json_is_not_success(self):
-        checks, count = rescue_agent._read_events(b"not json\\n")
+        checks, count = rescue_agent._read_events(b"not json\n")
         self.assertFalse(checks["valid_event_stream"])
         self.assertEqual(count, 1)
 
     def test_absent_opencode_fails_before_process(self):
-        with mock.patch.object(rescue_agent.shutil, "which", return_value=None), \\
+        with mock.patch.object(rescue_agent.shutil, "which", return_value=None), \
              mock.patch.object(rescue_agent, "_invoke") as process:
             with self.assertRaises(ValueError):
                 rescue_agent.evaluate("qwen3.8:27b-mlx", 8192)
@@ -139,9 +139,8 @@ class RescueAgentTests(unittest.TestCase):
             "agent": "opencode", "model": "qwen3.8:27b-mlx", "context_tokens": 8192,
             "blockers": [], "unknowns": [], "probes": [], "comparison": None,
         }
-        result = dict(rescue_agent.evaluate.__annotations__)
-        with mock.patch.object(rescue, "preflight", return_value=report), \\
-             mock.patch.object(rescue, "local_host", return_value="http://127.0.0.1:11434"), \\
+        with mock.patch.object(rescue, "preflight", return_value=report), \
+             mock.patch.object(rescue, "local_host", return_value="http://127.0.0.1:11434"), \
              mock.patch.object(rescue_agent, "evaluate", return_value={
                  "status": "passed", "checks": {"read_tool_completed": True},
                  "failure_category": None,
@@ -170,7 +169,7 @@ class RescueAgentTests(unittest.TestCase):
                 "failure_category": None
             }
         }
-        with mock.patch.object(rescue, "rescue", return_value=fake), \\
+        with mock.patch.object(rescue, "rescue", return_value=fake), \
              contextlib.redirect_stdout(io.StringIO()) as out:
             self.assertEqual(cli.main([
                 "rescue", "--agent", "opencode", "--model", "qwen3.8:27b-mlx",
