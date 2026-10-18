@@ -477,6 +477,11 @@ def format_terminal(report: Dict[str, Any]) -> str:
             lines.append(
                 "Observed A/B: " + experiment["observed_comparison"]["direction"]
             )
+        diagnosis = experiment.get("diagnosis")
+        if diagnosis:
+            lines.append("Diagnostic signature: " + diagnosis["code"])
+            lines.append("Diagnostic confidence: " + diagnosis["confidence"])
+            lines.append("Apply to real OpenCode config: no (not independently validated)")
         lines.append("Evidence: exploratory, not causal or statistically validated")
         lines.append("No automatic or global compaction changes were made.")
     if report.get("agent_ab_evaluation"):
