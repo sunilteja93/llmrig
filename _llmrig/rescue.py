@@ -274,6 +274,9 @@ def rescue(agent: str, model: str, context: int, runs: int,
         }
     report["status"] = "measured"
     report["unknowns"].append(
+        "The synthetic prompt is short; changing num_ctx does not exercise full context capacity"
+    )
+    report["unknowns"].append(
         "A synthetic tool-call canary does not measure OpenCode task success or prove a repair"
     )
     report["unknowns"].append(
