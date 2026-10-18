@@ -3,47 +3,46 @@
 LLMRig is a Python 3.9+ command-line tool. It **does not install** Ollama,
 oMLX, MLX-LM or llama.cpp just because you installed the CLI.
 
-**Release distinction (October 2026):** PyPI currently has **0.9.3**.
-The latest `main` branch contains the newer `runtimes`, model-specific
-`doctor`, `plan`, `run` and `report` facelift work. Before the next
-PyPI release, use the **GitHub source install below** to reproduce the
-[verified field runs](VERIFIED_DEMOS.md). `llmrig --version` may still
-print `0.9.3` for unreleased source changes: the version string alone
-does not prove that a command is available.
+**Published release: v0.10.0.** Use the stable PyPI package for
+the demonstrated `runtimes`, model-specific `doctor`, `plan`,
+`run` and `report` flows. If the new version has not propagated
+to your package index yet, check
+[the GitHub release](https://github.com/sunilteja93/llmrig/releases/tag/v0.10.0)
+before retrying. Installation does not start or install model runtimes.
 
-## Recommended: isolated pipx install of current GitHub main
+## Recommended: isolated pipx installation
 
-Prerequisites: Git, a Python 3.9+ interpreter and
-[`pipx`](https://pipx.pypa.io/). macOS with Homebrew:
+Prerequisites: Python 3.9+, and
+[`pipx`](https://pipx.pypa.io/). On macOS with Homebrew:
 
 ```bash
 brew install pipx
 pipx ensurepath
 ```
 
-Open a **new terminal** after `pipx ensurepath`, then:
+Open a new terminal after `pipx ensurepath`, then:
 
 ```bash
-pipx install 'git+https://github.com/sunilteja93/llmrig.git@main'
+pipx install llmrig
 rehash
+llmrig --version
 llmrig --help
 llmrig runtimes
 ```
 
-Verify that `llmrig --help` offers `runtimes`, `doctor`, `plan`,
-`run`, `verify` and `report`. The runtime scan must work without
-downloading a model or starting a service.
+To upgrade an existing installation:
 
-`@main` tracks an **unreleased moving branch**. For reproducibility,
-replace `main` in the URL with an exact Git commit SHA from the
-[repository history](https://github.com/sunilteja93/llmrig/commits/main/).
-A new PyPI release should replace this interim recommendation after
-release-artifact smoke testing.
+```bash
+pipx upgrade llmrig
+```
 
-To switch an existing isolated pipx installation to the current GitHub
-source, use `pipx install --force 'git+https://github.com/sunilteja93/llmrig.git@main'`.
-Do not confuse a global `~/.local/bin/llmrig` with an activated virtual
-environment's `bin/llmrig`.
+Inspect `llmrig --help` for `runtimes`, `doctor`, `plan`, `run`,
+`verify` and `report`. Probe commands must not download model weights.
+
+For development from unreleased source, install an exact Git commit:
+`pipx install 'git+https://github.com/sunilteja93/llmrig.git@COMMIT_SHA'`,
+substituting the desired commit. Avoid installing an unpinned moving
+branch when a reproducible versioned release is available.
 
 ## Alternative: clean virtual environment
 
@@ -55,7 +54,7 @@ macOS / Linux:
 ```bash
 mkdir -p "$HOME/.venvs"
 python3 -m venv "$HOME/.venvs/llmrig-demo"
-"$HOME/.venvs/llmrig-demo/bin/python" -m pip install 'git+https://github.com/sunilteja93/llmrig.git@main'
+"$HOME/.venvs/llmrig-demo/bin/python" -m pip install llmrig
 (cd /tmp && "$HOME/.venvs/llmrig-demo/bin/llmrig" --help)
 (cd /tmp && "$HOME/.venvs/llmrig-demo/bin/llmrig" runtimes)
 ```
@@ -64,7 +63,7 @@ Windows PowerShell (Git and Python must already be installed):
 
 ```powershell
 py -m venv "$HOME\llmrig-demo"
-& "$HOME\llmrig-demo\Scripts\python.exe" -m pip install "git+https://github.com/sunilteja93/llmrig.git@main"
+& "$HOME\llmrig-demo\Scripts\python.exe" -m pip install "llmrig"
 Set-Location $env:TEMP
 & "$HOME\llmrig-demo\Scripts\llmrig.exe" --help
 & "$HOME\llmrig-demo\Scripts\llmrig.exe" runtimes
@@ -76,20 +75,12 @@ macOS and Linux, including invoking the CLI **outside** the checkout.
 Do not infer that editable installation succeeded solely from
 `python -m _llmrig.cli` when you are inside the source directory.
 
-## PyPI release vs GitHub main
+## PyPI release vs GitHub source
 
-For the latest **published** package, rather than the unreleased
-walkthrough above:
-
-```bash
-pipx install llmrig
-llmrig --help
-```
-
-The published command set may differ from the latest GitHub docs until
-the next release is uploaded. **Check the actual help output** before
-following any Autopilot workflow. Do not call a feature shipped simply
-because code exists on `main`.
+The documented first-run workflow targets the published v0.10.0 CLI.
+Pin `llmrig==0.10.0` in reproducible Python environments, or use the
+exact Git tag/commit if testing unreleased changes.
+Do not assume a model runtime is installed just because the CLI is available.
 
 ## First read-only check
 
