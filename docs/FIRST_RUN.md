@@ -7,15 +7,14 @@ a working installation from missing evidence.
 ## 1. Inspect your actual machine
 
 ~~~sh
-pipx install 'git+https://github.com/sunilteja93/llmrig.git@main'
+pipx install llmrig
 llmrig --help
 llmrig runtimes
 ~~~
 
-The newest `main` features may not yet be in the published PyPI
-package. See [INSTALL.md](INSTALL.md) for stable-release differences,
-a pinned-commit option and clean virtual environments. Check the
-actual `--help` command list before following this guide.
+The published v0.10.0 package includes these commands. See
+[INSTALL.md](INSTALL.md) for a pinned-commit option and clean virtual
+environments. Confirm your installed `--version` and `--help` first.
 
 If a runtime is missing or stopped, fix its installation and readiness using
 its **official** instructions, then rerun the probe. Runtime detection is not a

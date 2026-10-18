@@ -17,13 +17,11 @@
 
 ## Start here
 
-**Try the current Autopilot features:** the latest GitHub `main` contains
-changes not yet published in PyPI v0.9.3. Install it in an isolated
-[`pipx`](https://pipx.pypa.io/) environment (Git and Python 3.9+ required).
+**Install LLMRig v0.10.0** using isolated [`pipx`](https://pipx.pypa.io/).
 See the [installation guide](https://github.com/sunilteja93/llmrig/blob/main/docs/INSTALL.md) for platform-specific setup.
 
 ~~~bash
-pipx install 'git+https://github.com/sunilteja93/llmrig.git@main'
+pipx install llmrig
 llmrig --help
 llmrig runtimes
 llmrig doctor mlx-community/Qwen3-0.6B-4bit
@@ -113,16 +111,15 @@ discovery metadata != installation trust
 ## Quickstart
 
 ```bash
-pipx install 'git+https://github.com/sunilteja93/llmrig.git@main'
+pipx install llmrig
 llmrig runtimes              # inspect which local runtimes are ready
 llmrig plan MODEL            # build a deterministic read-only plan
 llmrig run MODEL             # approve supported actions, then verify
 ```
 
-The `@main` install is a moving unreleased source version. For a
-reproducible installation, pin a Git commit SHA as shown in
-[INSTALL.md](https://github.com/sunilteja93/llmrig/blob/main/docs/INSTALL.md). The currently published PyPI version
-may have a different command set.
+For a fully reproducible test, use the pinned Git commit or published
+package version documented in
+[INSTALL.md](https://github.com/sunilteja93/llmrig/blob/main/docs/INSTALL.md).
 
 `solve` and `plan` are read-only. Downloads, runtime starts, model loads, and other mutations require explicit approval. For non-interactive automation, use `--yes` only when that intent is deliberate.
 
@@ -252,23 +249,22 @@ The SDK prints nothing and never exits the process. `SolveResult` and `SolveCand
 
 ## Installation
 
-For the currently verified Autopilot workflow, install from GitHub `main`
-using [pipx](https://pipx.pypa.io/) or a clean virtual environment:
+For LLMRig v0.10.0, use the published package via
+[`pipx`](https://pipx.pypa.io/) or a clean virtual environment:
 
 ```bash
-pipx install 'git+https://github.com/sunilteja93/llmrig.git@main'
+pipx install llmrig
 llmrig --help
 llmrig runtimes
 ```
 
-This source install is **not the same thing as the latest PyPI release**.
-PyPI users can install `pipx install llmrig`, but should check
-`llmrig --help` for the published command set. The source workflow
-will become the default PyPI recommendation after a tested release.
+After a new PyPI release is published, an existing `pipx` install can
+upgrade with `pipx upgrade llmrig`. To select unreleased GitHub code
+instead, pin an exact source commit as documented in
+[the install guide](https://github.com/sunilteja93/llmrig/blob/main/docs/INSTALL.md).
 
-For macOS, Linux, Windows PowerShell, pinned commits, PATH issues,
-corrupted editable installs and safe oMLX API-key setup, follow
-[**the full installation guide**](https://github.com/sunilteja93/llmrig/blob/main/docs/INSTALL.md).
+For macOS, Linux, Windows PowerShell, PATH issues and safe local API-key setup,
+see the [full installation guide](https://github.com/sunilteja93/llmrig/blob/main/docs/INSTALL.md).
 
 ## Architecture
 

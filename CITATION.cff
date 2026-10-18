@@ -5,8 +5,8 @@ type: software
 authors:
   - family-names: Vadlamani
     given-names: Sunil Kumar
-version: 0.9.3
-date-released: 2026-10-16
+version: 0.10.0
+date-released: 2026-10-18
 repository-code: "https://github.com/sunilteja93/llmrig"
 url: "https://github.com/sunilteja93/llmrig"
 license: MIT

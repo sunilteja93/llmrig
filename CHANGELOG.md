@@ -2,6 +2,32 @@
 
 All notable changes to LLMRig will be documented here.
 
+## 0.10.0 - 2026-10-18
+
+### Real Autopilot validation
+- Complete end-to-end oMLX and Ollama verification workflows backed by real
+  local receipts and versioned public field-run notes. Retain missing metric
+  and catalog provenance caveats; these are different models, not a runtime race.
+- Provide model-specific read-only Doctor guidance and truthful failure diagnoses.
+- Add privacy-filtered Rig Reports (terminal, Markdown, JSON) and a local-only
+  interactive viewer, plus the evidence-backed offline Plan Explorer.
+- Display the exact whitelisted Ollama artifact tag for reproducibility.
+
+### Reliability and measurement
+- Improve safe, revision-pinned Hugging Face acquisition and apply receipts.
+- Suppress misleading Ollama prompt-throughput values from sub-millisecond
+  evaluations instead of advertising cache-inflated rates.
+- Clarify oMLX startup errors, approval boundaries and local authentication.
+- Document installation recovery and honest unverified metrics.
+
+### Distribution and documentation
+- Add illustrated, clearly labeled real-run README walkthrough.
+- Cover isolated pipx installs, clean virtual environments, macOS, Linux and
+  Windows, and distinguish published packages from unreleased source.
+- Smoke-test real pipx wheel installs from outside the checkout and maintain
+  the Python 3.9/3.14 cross-platform CI matrix.
+- No new runtime dependencies, automatic uploads or silent installations.
+
 ## 0.9.3 - 2026-10-16
 
 ### GGUF planning and compatibility
