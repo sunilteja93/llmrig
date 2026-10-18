@@ -195,6 +195,53 @@ def _report_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _rescue_evidence_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="llmrig rescue-evidence",
+        description=(
+            "Offline, read-only comparison of existing Rescue agent receipts. "
+            "Never runs inference or changes OpenCode or Ollama settings."
+        ),
+    )
+    parser.add_argument(
+        "--baseline", action="append", required=True, metavar="REPORT_JSON",
+        help="Existing default-compaction --agent-test JSON receipt (repeatable, 1-10).",
+    )
+    parser.add_argument(
+        "--candidate", action="append", required=True, metavar="REPORT_JSON",
+        help="Existing --agent-no-auto-compact JSON receipt (repeatable, 1-10).",
+    )
+    parser.add_argument("--json", action="store_true", help="Print privacy-filtered JSON.")
+    parser.add_argument("--output", help="Write new result JSON only; never overwrite.")
+    return parser
+
+
+def command_rescue_evidence(args: argparse.Namespace) -> int:
+    from .rescue_evidence import assess, format_terminal
+
+    try:
+        result = assess(args.baseline, args.candidate)
+    except ValueError as exc:
+        print("llmrig rescue-evidence: " + str(exc), file=sys.stderr)
+        return 2
+    payload = json.dumps(result, indent=2) + "\n"
+    if args.output:
+        try:
+            with Path(args.output).open("x", encoding="utf-8") as dest:
+                dest.write(payload)
+        except OSError as exc:
+            print(
+                "llmrig rescue-evidence: unable to create output (" +
+                exc.__class__.__name__ + ")", file=sys.stderr,
+            )
+            return 2
+        print(format_terminal(result), end="")
+        print("Offline assessment saved locally. No report was uploaded.")
+    else:
+        print(payload, end="") if args.json else print(format_terminal(result), end="")
+    return 0
+
+
 def _rescue_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="llmrig rescue",
@@ -675,6 +722,7 @@ def _print_augmented_help() -> int:
     print("                       Read-only preflight; --probe opts into bounded inference.")
     print("                       --agent-test opts into one disposable OpenCode task.")
     print("                       --ab-test compares fixed tasks at two contexts.")
+    print("  rescue-evidence      Offline assessment of existing mitigation receipts.")
     return 0
 
 
@@ -686,6 +734,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return command_report(_report_parser().parse_args(values[1:]))
     if values and values[0] == "rescue":
         return command_rescue(_rescue_parser().parse_args(values[1:]))
+    if values and values[0] == "rescue-evidence":
+        return command_rescue_evidence(_rescue_evidence_parser().parse_args(values[1:]))
     if values in (["--help"], ["-h"]):
         return _print_augmented_help()
 
