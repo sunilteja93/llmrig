@@ -141,6 +141,18 @@ jobs:
           "$RUNNER_TEMP/llmrig-wheel/bin/llmrig" --help >/dev/null
           "$RUNNER_TEMP/llmrig-wheel/bin/llmrig" runtimes --json >/dev/null
 
+      - name: Smoke-test new-user pipx wheel install outside checkout
+        shell: bash
+        run: |
+          python -m pip install pipx
+          export PIPX_HOME="$RUNNER_TEMP/llmrig-pipx-home"
+          export PIPX_BIN_DIR="$RUNNER_TEMP/llmrig-pipx-bin"
+          python -m pipx install dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$PIPX_BIN_DIR/llmrig" --help >/dev/null
+          "$PIPX_BIN_DIR/llmrig" runtimes --json >/dev/null
+          "$PIPX_BIN_DIR/llmrig" report --help >/dev/null
+
       - name: Install source distribution
         shell: bash
         run: |

@@ -7,10 +7,15 @@ a working installation from missing evidence.
 ## 1. Inspect your actual machine
 
 ~~~sh
-pipx install llmrig
-llmrig --version
+pipx install 'git+https://github.com/sunilteja93/llmrig.git@main'
+llmrig --help
 llmrig runtimes
 ~~~
+
+The newest `main` features may not yet be in the published PyPI
+package. See [INSTALL.md](INSTALL.md) for stable-release differences,
+a pinned-commit option and clean virtual environments. Check the
+actual `--help` command list before following this guide.
 
 If a runtime is missing or stopped, fix its installation and readiness using
 its **official** instructions, then rerun the probe. Runtime detection is not a
@@ -69,4 +74,6 @@ runtime and version, OS and architecture, configured context, LLMRig version,
 whether the model was already cached, and how the measurement was produced.
 Share only public hardware descriptors and scrub any machine-specific identifiers.
 
-See [validation matrix](https://github.com/sunilteja93/llmrig/blob/main/docs/VALIDATION_MATRIX.md).
+For two completed example runs and their limitations, see
+[VERIFIED_DEMOS.md](VERIFIED_DEMOS.md). For test coverage and open
+validation gaps, see [VALIDATION_MATRIX.md](VALIDATION_MATRIX.md).
